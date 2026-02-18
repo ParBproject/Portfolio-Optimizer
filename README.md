@@ -6,6 +6,9 @@
 ![CVXPY](https://img.shields.io/badge/Solver-CVXPY%2FclaRabel-orange)
 ![Plotly](https://img.shields.io/badge/Viz-Plotly%2FStreamlit-9cf)
 
+![Efficient Frontier](screenshots/01_efficient_frontier.png)
+*6,000 simulated random portfolios (coloured by Sharpe ratio) with the optimised Efficient Frontier curve, Capital Market Line, Global Minimum Variance Portfolio (◆), and Maximum Sharpe Ratio Portfolio (★).*
+
 ---
 
 ## 🧠 Theory
@@ -63,6 +66,8 @@ portfolio-optimizer/
 │   ├── 03_efficient_frontier.ipynb  # Full frontier + interactive Plotly viz
 │   └── 04_backtesting.ipynb       # Out-of-sample performance + drawdown
 │
+├── screenshots/                   # Sample output images
+│
 ├── src/
 │   ├── __init__.py
 │   ├── data_handler.py            # Load, clean, split data; simulate portfolios
@@ -103,6 +108,9 @@ streamlit run app.py
 ```
 Then open http://localhost:8501 in your browser. Configure tickers, dates,
 risk-free rate, and weight constraints in the sidebar.
+
+![Streamlit App](screenshots/05_streamlit_app.png)
+*The Streamlit dashboard: sidebar controls on the left, Efficient Frontier in the main panel. Tabs switch between the frontier view, individual portfolio weights, backtest, and correlation heatmap.*
 
 ### Option B – Jupyter Notebooks
 ```bash
@@ -160,10 +168,22 @@ fig.show()
 
 ## 📊 Sample Outputs
 
-### Efficient Frontier
-The interactive chart shows ~5,000 random portfolios coloured by Sharpe ratio (Viridis colourscale), the optimised frontier curve, Capital Market Line, and highlighted GMVP / MSR markers with full weight breakdowns on hover.
+### Optimised Portfolio Weights
 
-### Backtest Metrics (illustrative, 2024 OOS)
+![Portfolio Weights](screenshots/02_portfolio_weights.png)
+*Side-by-side weight breakdown for the two key portfolios. The GMVP tilts defensively toward lower-volatility assets (JPM, SPY), while the Max Sharpe portfolio concentrates in assets with the best historical risk-adjusted returns.*
+
+### Asset Correlations & Statistics
+
+![Correlations and Stats](screenshots/04_correlations_stats.png)
+*Left: lower-triangular correlation heatmap for the in-sample period. Right: annualised return, volatility, and Sharpe for each individual asset alongside the three optimised portfolios.*
+
+### Out-of-Sample Backtest
+
+![Backtest](screenshots/03_backtest.png)
+*Top panel: cumulative wealth of each strategy over the out-of-sample test period (starting at $1). Bottom panel: underwater drawdown chart — shallower and shorter drawdowns indicate better risk management.*
+
+### Illustrative Backtest Metrics (2024 OOS)
 
 | Metric | GMVP | Max Sharpe | Equal Weight |
 |--------|------|-----------|--------------|
