@@ -109,6 +109,36 @@ def annualise_stats(daily_returns: pd.DataFrame) -> tuple[pd.Series, pd.DataFram
     return mu, cov
 
 
+
+def shrink_covariance(
+    covariance: pd.DataFrame | np.ndarray,
+    intensity: float = 0.15,
+) -> pd.DataFrame | np.ndarray:
+    """Shrink sample covariance toward its diagonal for greater stability.
+
+    An intensity of 0 returns the sample covariance unchanged. An intensity of
+    1 removes all cross-asset covariance while preserving individual variances.
+    """
+    if not 0.0 <= intensity <= 1.0:
+        raise ValueError("intensity must be between 0 and 1")
+
+    values = np.asarray(covariance, dtype=float)
+    if values.ndim != 2 or values.shape[0] != values.shape[1]:
+        raise ValueError("covariance must be a square matrix")
+    if not np.isfinite(values).all():
+        raise ValueError("covariance must contain only finite values")
+
+    target = np.diag(np.diag(values))
+    shrunk = (1.0 - intensity) * values + intensity * target
+
+    if isinstance(covariance, pd.DataFrame):
+        return pd.DataFrame(
+            shrunk,
+            index=covariance.index,
+            columns=covariance.columns,
+        )
+    return shrunk
+
 def simulate_random_portfolios(
     mu: np.ndarray | pd.Series,
     cov: np.ndarray | pd.DataFrame,
