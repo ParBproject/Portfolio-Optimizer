@@ -319,7 +319,8 @@ def max_sharpe_scipy(
     if not res.success:
         return {"weights": None, "status": res.message}
 
-    w_vals = np.clip(res.x, 0, 1);  w_vals /= w_vals.sum()
+    w_vals = np.clip(res.x, 0, 1)
+    w_vals /= w_vals.sum()
     ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr, risk_free_rate)
 
     return {
