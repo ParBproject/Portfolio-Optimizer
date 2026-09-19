@@ -54,6 +54,37 @@ def sharpe_ratio(
     return (ret - risk_free_rate) / vol if vol > 0 else np.nan
 
 
+
+def sortino_ratio(
+    daily_returns: pd.Series | np.ndarray,
+    risk_free_rate: float = 0.04,
+) -> float:
+    """Sortino ratio using annualised downside deviation."""
+    r = np.asarray(daily_returns, dtype=float)
+    downside = np.minimum(r, 0.0)
+    downside_deviation = float(np.sqrt(np.mean(downside**2)) * np.sqrt(TRADING_DAYS))
+    ret = annualised_return(r)
+    return (ret - risk_free_rate) / downside_deviation if downside_deviation > 0 else np.nan
+
+
+def historical_var_expected_shortfall(
+    daily_returns: pd.Series | np.ndarray,
+    confidence: float = 0.95,
+) -> tuple[float, float]:
+    """Historical VaR and Expected Shortfall as positive loss magnitudes."""
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be between 0 and 1")
+    r = np.asarray(daily_returns, dtype=float)
+    r = r[np.isfinite(r)]
+    if r.size == 0:
+        raise ValueError("daily_returns must contain finite observations")
+
+    cutoff = float(np.quantile(r, 1.0 - confidence))
+    tail = r[r <= cutoff]
+    value_at_risk = max(0.0, -cutoff)
+    expected_shortfall = max(0.0, -float(tail.mean()))
+    return value_at_risk, expected_shortfall
+
 def max_drawdown(cumulative_returns: pd.Series | np.ndarray) -> float:
     """
     Maximum drawdown from a cumulative-return (or price) series.
@@ -134,13 +165,20 @@ def performance_summary(
                             Max Drawdown, Calmar Ratio]
     """
     cum = cumulative_wealth(portfolio_returns)
+    value_at_risk, expected_shortfall = historical_var_expected_shortfall(
+        portfolio_returns,
+        confidence=0.95,
+    )
     return pd.Series(
         {
             "Annualised Return": annualised_return(portfolio_returns),
-            "Annualised Vol":    annualised_volatility(portfolio_returns),
-            "Sharpe Ratio":      sharpe_ratio(portfolio_returns, risk_free_rate),
-            "Max Drawdown":      max_drawdown(cum),
-            "Calmar Ratio":      calmar_ratio(portfolio_returns, risk_free_rate),
+            "Annualised Vol": annualised_volatility(portfolio_returns),
+            "Sharpe Ratio": sharpe_ratio(portfolio_returns, risk_free_rate),
+            "Sortino Ratio": sortino_ratio(portfolio_returns, risk_free_rate),
+            "Max Drawdown": max_drawdown(cum),
+            "Calmar Ratio": calmar_ratio(portfolio_returns, risk_free_rate),
+            "95% Historical VaR": value_at_risk,
+            "95% Expected Shortfall": expected_shortfall,
         },
         name=label,
     )
@@ -168,9 +206,12 @@ def compare_portfolios(
     df = pd.concat(rows, axis=1)
     fmt = {
         "Annualised Return": "{:.2%}",
-        "Annualised Vol":    "{:.2%}",
-        "Sharpe Ratio":      "{:.3f}",
-        "Max Drawdown":      "{:.2%}",
-        "Calmar Ratio":      "{:.3f}",
+        "Annualised Vol": "{:.2%}",
+        "Sharpe Ratio": "{:.3f}",
+        "Sortino Ratio": "{:.3f}",
+        "Max Drawdown": "{:.2%}",
+        "Calmar Ratio": "{:.3f}",
+        "95% Historical VaR": "{:.2%}",
+        "95% Expected Shortfall": "{:.2%}",
     }
     return df, fmt

@@ -1,23 +1,42 @@
-"""
-visualization.py
-----------------
-Interactive Plotly visualisations for the Efficient Frontier and backtesting.
-"""
+"""Professional Plotly visualisations for portfolio research."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
+
+NAVY = "#0F172A"
+TEAL = "#14B8A6"
+CYAN = "#38BDF8"
+BLUE = "#2563EB"
+ROSE = "#F43F5E"
+SLATE = "#64748B"
+GRID = "#E2E8F0"
+PAPER = "#FFFFFF"
 
 
-# ── Colour palette ─────────────────────────────────────────────────────────────
-GMVP_COLOR   = "#00CC66"   # green
-MSR_COLOR    = "#FF4136"   # red
-FRONTIER_CLR = "#003366"   # dark blue
-BG_COLOR     = "#F8F9FA"
+def _base_layout(title: str, height: int = 520) -> dict:
+    return {
+        "title": {
+            "text": title,
+            "font": {"size": 22, "color": NAVY},
+            "x": 0.02,
+            "xanchor": "left",
+        },
+        "height": height,
+        "paper_bgcolor": PAPER,
+        "plot_bgcolor": PAPER,
+        "font": {"family": "Inter, Arial, sans-serif", "color": NAVY},
+        "margin": {"l": 60, "r": 30, "t": 70, "b": 70},
+        "legend": {
+            "orientation": "h",
+            "y": -0.16,
+            "x": 0.0,
+            "font": {"size": 12},
+        },
+        "hovermode": "closest",
+    }
 
 
 def plot_efficient_frontier(
@@ -27,226 +46,289 @@ def plot_efficient_frontier(
     msr: dict | None = None,
     tickers: list[str] | None = None,
     risk_free_rate: float = 0.04,
-    title: str = "Efficient Frontier",
+    title: str = "Efficient Frontier & Opportunity Set",
 ) -> go.Figure:
-    """
-    Interactive Plotly scatter of the Efficient Frontier.
-
-    Parameters
-    ----------
-    frontier_df  : DataFrame from optimizer.efficient_frontier()
-                   columns: [ret, vol, sharpe, <tickers…>]
-    random_df    : DataFrame from data_handler.simulate_random_portfolios()
-                   (optional – shows background cloud)
-    gmvp         : dict from optimizer.min_variance() – Global Min Variance
-    msr          : dict from optimizer.max_sharpe()   – Max Sharpe Ratio
-    tickers      : list of asset names (for hover labels)
-    risk_free_rate: for Capital Market Line
-    title        : figure title
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
-    """
+    """Interactive efficient-frontier chart with portfolio diagnostics."""
     fig = go.Figure()
 
-    # ── Random portfolios (background cloud) ───────────────────────────────────
     if random_df is not None and len(random_df):
-        t = tickers or [c for c in random_df.columns if c not in ("ret", "vol", "sharpe")]
-        hover_txt = _build_hover(random_df, t)
-        fig.add_trace(go.Scatter(
-            x=random_df["vol"], y=random_df["ret"],
-            mode="markers",
-            marker=dict(
-                size=4,
-                color=random_df["sharpe"],
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title="Sharpe", thickness=14),
-                opacity=0.55,
-            ),
-            text=hover_txt,
-            hovertemplate="%{text}<extra>Random Portfolio</extra>",
-            name="Random Portfolios",
-        ))
+        labels = tickers or [
+            column
+            for column in random_df.columns
+            if column not in ("ret", "vol", "sharpe")
+        ]
+        fig.add_trace(
+            go.Scatter(
+                x=random_df["vol"],
+                y=random_df["ret"],
+                mode="markers",
+                marker={
+                    "size": 5,
+                    "color": random_df["sharpe"],
+                    "colorscale": "Tealgrn",
+                    "showscale": True,
+                    "colorbar": {
+                        "title": "Sharpe",
+                        "thickness": 12,
+                        "outlinewidth": 0,
+                    },
+                    "opacity": 0.38,
+                    "line": {"width": 0},
+                },
+                text=_build_hover(random_df, labels),
+                hovertemplate="%{text}<extra>Simulated portfolio</extra>",
+                name="Opportunity set",
+            )
+        )
 
-    # ── Efficient Frontier curve ───────────────────────────────────────────────
-    t = tickers or [c for c in frontier_df.columns if c not in ("ret", "vol", "sharpe")]
-    hover_ef = _build_hover(frontier_df, t)
-    fig.add_trace(go.Scatter(
-        x=frontier_df["vol"], y=frontier_df["ret"],
-        mode="lines+markers",
-        line=dict(color=FRONTIER_CLR, width=3),
-        marker=dict(size=5, color=FRONTIER_CLR),
-        text=hover_ef,
-        hovertemplate="%{text}<extra>Efficient Frontier</extra>",
-        name="Efficient Frontier",
-    ))
-
-    # ── Capital Market Line ────────────────────────────────────────────────────
-    if msr is not None and msr.get("weights") is not None:
-        x_cml = np.array([0, frontier_df["vol"].max() * 1.15])
-        slope  = (msr["ret"] - risk_free_rate) / msr["vol"]
-        y_cml  = risk_free_rate + slope * x_cml
-        fig.add_trace(go.Scatter(
-            x=x_cml, y=y_cml,
+    labels = tickers or [
+        column
+        for column in frontier_df.columns
+        if column not in ("ret", "vol", "sharpe")
+    ]
+    fig.add_trace(
+        go.Scatter(
+            x=frontier_df["vol"],
+            y=frontier_df["ret"],
             mode="lines",
-            line=dict(color=MSR_COLOR, dash="dash", width=1.5),
-            name="Capital Market Line",
-        ))
+            line={"color": NAVY, "width": 4},
+            text=_build_hover(frontier_df, labels),
+            hovertemplate="%{text}<extra>Efficient frontier</extra>",
+            name="Efficient frontier",
+        )
+    )
 
-    # ── GMVP marker ───────────────────────────────────────────────────────────
+    if msr is not None and msr.get("weights") is not None and len(frontier_df):
+        x_cml = np.array([0.0, float(frontier_df["vol"].max()) * 1.12])
+        slope = (msr["ret"] - risk_free_rate) / msr["vol"]
+        y_cml = risk_free_rate + slope * x_cml
+        fig.add_trace(
+            go.Scatter(
+                x=x_cml,
+                y=y_cml,
+                mode="lines",
+                line={"color": CYAN, "dash": "dash", "width": 2},
+                name="Capital market line",
+                hoverinfo="skip",
+            )
+        )
+
     if gmvp is not None and gmvp.get("weights") is not None:
-        w = gmvp["weights"]
-        hover = (
-            f"<b>Global Min Variance</b><br>"
-            f"Return: {gmvp['ret']:.2%}  Vol: {gmvp['vol']:.2%}  Sharpe: {gmvp['sharpe']:.3f}<br>"
-            + "<br>".join(f"{k}: {v:.2%}" for k, v in w.items())
+        hover = _portfolio_hover("Minimum Variance", gmvp)
+        fig.add_trace(
+            go.Scatter(
+                x=[gmvp["vol"]],
+                y=[gmvp["ret"]],
+                mode="markers",
+                marker={
+                    "size": 17,
+                    "color": TEAL,
+                    "symbol": "diamond",
+                    "line": {"width": 2, "color": PAPER},
+                },
+                name="Minimum variance",
+                hovertemplate=hover + "<extra></extra>",
+            )
         )
-        fig.add_trace(go.Scatter(
-            x=[gmvp["vol"]], y=[gmvp["ret"]],
-            mode="markers",
-            marker=dict(size=18, color=GMVP_COLOR, symbol="diamond", line=dict(width=2, color="white")),
-            name="Min Variance",
-            hovertemplate=hover + "<extra></extra>",
-        ))
 
-    # ── MSR marker ────────────────────────────────────────────────────────────
     if msr is not None and msr.get("weights") is not None:
-        w = msr["weights"]
-        hover = (
-            f"<b>Max Sharpe Ratio</b><br>"
-            f"Return: {msr['ret']:.2%}  Vol: {msr['vol']:.2%}  Sharpe: {msr['sharpe']:.3f}<br>"
-            + "<br>".join(f"{k}: {v:.2%}" for k, v in w.items())
+        hover = _portfolio_hover("Maximum Sharpe", msr)
+        fig.add_trace(
+            go.Scatter(
+                x=[msr["vol"]],
+                y=[msr["ret"]],
+                mode="markers",
+                marker={
+                    "size": 20,
+                    "color": ROSE,
+                    "symbol": "star",
+                    "line": {"width": 2, "color": PAPER},
+                },
+                name="Maximum Sharpe",
+                hovertemplate=hover + "<extra></extra>",
+            )
         )
-        fig.add_trace(go.Scatter(
-            x=[msr["vol"]], y=[msr["ret"]],
-            mode="markers",
-            marker=dict(size=22, color=MSR_COLOR, symbol="star", line=dict(width=2, color="white")),
-            name="Max Sharpe",
-            hovertemplate=hover + "<extra></extra>",
-        ))
 
-    # ── Risk-free rate annotation ──────────────────────────────────────────────
     fig.add_annotation(
-        x=0, y=risk_free_rate, text=f"Rf={risk_free_rate:.1%}",
-        showarrow=False, font=dict(size=11, color="grey"),
-        xanchor="left", yanchor="bottom",
+        x=0,
+        y=risk_free_rate,
+        text=f"Risk-free rate {risk_free_rate:.1%}",
+        showarrow=False,
+        font={"size": 11, "color": SLATE},
+        xanchor="left",
+        yanchor="bottom",
     )
-
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=22)),
-        xaxis=dict(title="Annualised Volatility (σ)", tickformat=".1%", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Annualised Expected Return (μ)", tickformat=".1%", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, paper_bgcolor="white",
-        legend=dict(orientation="h", y=-0.15, x=0.0),
-        hovermode="closest",
-        width=950, height=620,
-    )
+    layout = _base_layout(title, height=610)
+    layout["xaxis"] = {
+        "title": "Annualised volatility",
+        "tickformat": ".1%",
+        "gridcolor": GRID,
+        "zeroline": False,
+    }
+    layout["yaxis"] = {
+        "title": "Annualised expected return",
+        "tickformat": ".1%",
+        "gridcolor": GRID,
+        "zeroline": False,
+    }
+    fig.update_layout(**layout)
     return fig
 
 
-def plot_weights(weights: pd.Series, title: str = "Portfolio Weights") -> go.Figure:
-    """Bar chart of portfolio weights."""
-    sorted_w = weights.sort_values(ascending=False)
-    colors = px.colors.qualitative.Bold[:len(sorted_w)]
-    fig = go.Figure(go.Bar(
-        x=sorted_w.index, y=sorted_w.values,
-        marker_color=colors,
-        text=[f"{v:.1%}" for v in sorted_w.values],
-        textposition="outside",
-    ))
-    fig.update_layout(
-        title=title, yaxis=dict(title="Weight", tickformat=".0%", range=[0, sorted_w.max() * 1.2]),
-        plot_bgcolor=BG_COLOR, width=700, height=420,
+def plot_weights(weights: pd.Series, title: str = "Portfolio Allocation") -> go.Figure:
+    """Horizontal allocation chart ordered by portfolio weight."""
+    sorted_weights = weights.sort_values(ascending=True)
+    fig = go.Figure(
+        go.Bar(
+            x=sorted_weights.values,
+            y=sorted_weights.index,
+            orientation="h",
+            marker={
+                "color": sorted_weights.values,
+                "colorscale": [[0, "#CCFBF1"], [1, TEAL]],
+                "line": {"width": 0},
+            },
+            text=[f"{value:.1%}" for value in sorted_weights.values],
+            textposition="outside",
+            hovertemplate="<b>%{y}</b><br>Weight: %{x:.2%}<extra></extra>",
+        )
     )
+    layout = _base_layout(title, height=max(360, 70 + len(sorted_weights) * 45))
+    layout["xaxis"] = {
+        "title": "Portfolio weight",
+        "tickformat": ".0%",
+        "gridcolor": GRID,
+        "range": [0, max(float(sorted_weights.max()) * 1.2, 0.1)],
+    }
+    layout["yaxis"] = {"title": ""}
+    layout["showlegend"] = False
+    fig.update_layout(**layout)
     return fig
 
 
 def plot_backtest(
     cum_returns: dict[str, pd.Series],
-    title: str = "Out-of-Sample Cumulative Returns",
+    title: str = "Out-of-Sample Wealth",
 ) -> go.Figure:
-    """
-    Overlay multiple cumulative return series.
-
-    Parameters
-    ----------
-    cum_returns : {label: cumulative_wealth_series}
-    """
-    palette = px.colors.qualitative.Safe
+    """Overlay cumulative wealth series."""
+    colors = [NAVY, TEAL, CYAN, ROSE, BLUE]
     fig = go.Figure()
-    for i, (label, series) in enumerate(cum_returns.items()):
-        fig.add_trace(go.Scatter(
-            x=series.index, y=series.values,
-            mode="lines", name=label,
-            line=dict(width=2.5, color=palette[i % len(palette)]),
-            hovertemplate=f"<b>{label}</b><br>Date: %{{x|%Y-%m-%d}}<br>Value: %{{y:.3f}}<extra></extra>",
-        ))
-    fig.add_hline(y=1.0, line_dash="dot", line_color="grey", annotation_text="Start")
-    fig.update_layout(
-        title=title,
-        xaxis=dict(title="Date", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Cumulative Wealth ($1 start)", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, legend=dict(orientation="h", y=-0.15),
-        width=950, height=520,
-    )
+    for index, (label, series) in enumerate(cum_returns.items()):
+        fig.add_trace(
+            go.Scatter(
+                x=series.index,
+                y=series.values,
+                mode="lines",
+                name=label,
+                line={"width": 2.7, "color": colors[index % len(colors)]},
+                hovertemplate=(
+                    f"<b>{label}</b><br>Date: %{{x|%Y-%m-%d}}"
+                    "<br>Wealth: %{y:.3f}<extra></extra>"
+                ),
+            )
+        )
+    fig.add_hline(y=1.0, line_dash="dot", line_color=SLATE, opacity=0.5)
+    layout = _base_layout(title, height=500)
+    layout["xaxis"] = {"title": "", "gridcolor": GRID}
+    layout["yaxis"] = {"title": "Wealth index", "gridcolor": GRID}
+    fig.update_layout(**layout)
     return fig
 
 
 def plot_drawdown(
     daily_returns_dict: dict[str, pd.Series],
-    title: str = "Drawdown",
+    title: str = "Drawdown Profile",
 ) -> go.Figure:
     """Drawdown chart for one or more portfolios."""
-    from src.metrics import cumulative_wealth, max_drawdown
-    palette = px.colors.qualitative.Safe
+    from src.metrics import cumulative_wealth
+
+    colors = [NAVY, TEAL, CYAN, ROSE, BLUE]
     fig = go.Figure()
-    for i, (label, dr) in enumerate(daily_returns_dict.items()):
-        cum  = cumulative_wealth(dr)
-        peak = cum.cummax()
-        dd   = (cum - peak) / peak
-        fig.add_trace(go.Scatter(
-            x=dd.index, y=dd.values,
-            mode="lines", name=label, fill="tozeroy",
-            line=dict(color=palette[i % len(palette)], width=1.5),
-        ))
-    fig.update_layout(
-        title=title,
-        xaxis=dict(title="Date", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Drawdown", tickformat=".1%", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, width=950, height=380,
-    )
+    for index, (label, daily_returns) in enumerate(daily_returns_dict.items()):
+        wealth = cumulative_wealth(daily_returns)
+        peak = wealth.cummax()
+        drawdown = wealth / peak - 1.0
+        fig.add_trace(
+            go.Scatter(
+                x=drawdown.index,
+                y=drawdown.values,
+                mode="lines",
+                name=label,
+                line={"color": colors[index % len(colors)], "width": 2},
+                hovertemplate=(
+                    f"<b>{label}</b><br>Date: %{{x|%Y-%m-%d}}"
+                    "<br>Drawdown: %{y:.2%}<extra></extra>"
+                ),
+            )
+        )
+    layout = _base_layout(title, height=370)
+    layout["xaxis"] = {"title": "", "gridcolor": GRID}
+    layout["yaxis"] = {
+        "title": "Drawdown",
+        "tickformat": ".1%",
+        "gridcolor": GRID,
+    }
+    fig.update_layout(**layout)
     return fig
 
 
-def plot_correlation_heatmap(returns: pd.DataFrame, title: str = "Asset Correlation Matrix") -> go.Figure:
+def plot_correlation_heatmap(
+    returns: pd.DataFrame,
+    title: str = "Asset Correlation Matrix",
+) -> go.Figure:
     """Annotated correlation heatmap."""
-    corr = returns.corr()
-    fig = go.Figure(go.Heatmap(
-        z=corr.values, x=corr.columns, y=corr.index,
-        colorscale="RdBu", zmin=-1, zmax=1,
-        text=np.round(corr.values, 2),
-        texttemplate="%{text}", textfont=dict(size=12),
-        hoverongaps=False,
-    ))
-    fig.update_layout(title=title, width=600, height=550)
+    correlation = returns.corr()
+    fig = go.Figure(
+        go.Heatmap(
+            z=correlation.values,
+            x=correlation.columns,
+            y=correlation.index,
+            colorscale=[
+                [0.0, "#DBEAFE"],
+                [0.5, "#F8FAFC"],
+                [1.0, "#0F766E"],
+            ],
+            zmin=-1,
+            zmax=1,
+            text=np.round(correlation.values, 2),
+            texttemplate="%{text}",
+            textfont={"size": 12},
+            hovertemplate="%{y} / %{x}<br>Correlation: %{z:.2f}<extra></extra>",
+            colorbar={"title": "ρ", "thickness": 12, "outlinewidth": 0},
+        )
+    )
+    layout = _base_layout(title, height=540)
+    layout["xaxis"] = {"side": "bottom"}
+    layout["yaxis"] = {"autorange": "reversed"}
+    fig.update_layout(**layout)
     return fig
 
 
-# ── Private helpers ────────────────────────────────────────────────────────────
+def _portfolio_hover(label: str, portfolio: dict) -> str:
+    weights = portfolio["weights"]
+    allocation = "<br>".join(
+        f"{ticker}: {weight:.1%}"
+        for ticker, weight in weights.items()
+        if weight > 0.005
+    )
+    return (
+        f"<b>{label}</b><br>"
+        f"Return: {portfolio['ret']:.2%}<br>"
+        f"Volatility: {portfolio['vol']:.2%}<br>"
+        f"Sharpe: {portfolio['sharpe']:.2f}<br><br>{allocation}"
+    )
+
 
 def _build_hover(df: pd.DataFrame, tickers: list[str]) -> list[str]:
-    """Build hover-text strings for scatter traces."""
-    texts = []
+    texts: list[str] = []
     for _, row in df.iterrows():
         lines = [
             f"Return: {row['ret']:.2%}",
             f"Volatility: {row['vol']:.2%}",
-            f"Sharpe: {row['sharpe']:.3f}",
+            f"Sharpe: {row['sharpe']:.2f}",
         ]
-        for t in tickers:
-            if t in row:
-                lines.append(f"{t}: {row[t]:.2%}")
+        for ticker in tickers:
+            if ticker in row and row[ticker] > 0.005:
+                lines.append(f"{ticker}: {row[ticker]:.1%}")
         texts.append("<br>".join(lines))
     return texts

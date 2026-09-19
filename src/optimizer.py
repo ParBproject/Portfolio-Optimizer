@@ -54,6 +54,7 @@ def min_variance(
     cov: np.ndarray | pd.DataFrame,
     max_weight: float | None = None,
     target_return: float | None = None,
+    risk_free_rate: float = 0.04,
 ) -> dict:
     """
     Global Minimum Variance Portfolio (GMVP), or constrained to a target return.
@@ -90,7 +91,12 @@ def min_variance(
 
     w_vals = np.clip(w.value, 0, 1)
     w_vals /= w_vals.sum()          # re-normalise after numerical clip
-    ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr)
+    ret, vol, sharpe = _portfolio_stats(
+        w_vals,
+        mu_arr,
+        cov_arr,
+        risk_free_rate,
+    )
     tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(n)]
 
     return {
@@ -195,7 +201,12 @@ def efficient_frontier(
     tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(len(mu_arr))]
 
     # Feasible return range – from GMVP return to maximum individual asset return
-    gmvp = min_variance(mu, cov, max_weight=max_weight)
+    gmvp = min_variance(
+        mu,
+        cov,
+        max_weight=max_weight,
+        risk_free_rate=risk_free_rate,
+    )
     mu_min = gmvp["ret"] if gmvp["weights"] is not None else mu_arr.min()
     mu_max = mu_arr.max() * 0.995    # slight buffer for numerical stability
 
@@ -203,7 +214,13 @@ def efficient_frontier(
     records = []
 
     for target in targets:
-        result = min_variance(mu, cov, max_weight=max_weight, target_return=target)
+        result = min_variance(
+            mu,
+            cov,
+            max_weight=max_weight,
+            target_return=target,
+            risk_free_rate=risk_free_rate,
+        )
         if result["weights"] is None:
             continue
         w = result["weights"].values
@@ -302,7 +319,8 @@ def max_sharpe_scipy(
     if not res.success:
         return {"weights": None, "status": res.message}
 
-    w_vals = np.clip(res.x, 0, 1);  w_vals /= w_vals.sum()
+    w_vals = np.clip(res.x, 0, 1)
+    w_vals /= w_vals.sum()
     ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr, risk_free_rate)
 
     return {
