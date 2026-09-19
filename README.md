@@ -1,86 +1,240 @@
-# Markowitz Portfolio Optimizer
+# Quantitative Portfolio Research Lab
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](requirements.txt)
-[![Streamlit](https://img.shields.io/badge/Streamlit-Interactive_App-FF4B4B?logo=streamlit&logoColor=white)](app.py)
-[![CVXPY](https://img.shields.io/badge/Optimization-CVXPY-1f6feb)](src/optimizer.py)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](requirements.txt)
+[![Optimization](https://img.shields.io/badge/Optimization-CVXPY-0F766E)](src/optimizer.py)
+[![Validation](https://img.shields.io/badge/Validation-Walk--Forward-2563EB)](src/backtest.py)
+[![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](app.py)
+[![CI](https://github.com/ParBproject/Portfolio-Optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/ParBproject/Portfolio-Optimizer/actions/workflows/ci.yml)
 
-An interactive quantitative-finance application implementing Markowitz mean-variance optimization, efficient-frontier construction, portfolio diagnostics, and historical backtesting.
+A portfolio-grade quantitative research project for **portfolio construction, risk analysis, out-of-sample validation, and implementation-aware backtesting** using historical financial data.
 
-## What It Demonstrates
+This repository goes beyond a standard Markowitz demo. It combines constrained optimization, covariance regularization, no-lookahead walk-forward testing, turnover-aware transaction costs, downside/tail-risk metrics, and an interactive research dashboard.
 
-- Clean separation between data, optimization, metrics, and visualization
-- Constrained portfolio optimization with CVXPY
-- Global Minimum Variance and Maximum Sharpe portfolios
-- Efficient-frontier simulation and visualization
-- Diversification, correlation, and allocation diagnostics
-- Historical comparison against an equal-weight benchmark
-- Interactive controls through Streamlit
+## Employer snapshot
 
-## Application Preview
+| Capability | Evidence |
+|---|---|
+| Real market data | Historical adjusted prices via Yahoo Finance |
+| Optimization | CVXPY minimum-variance and maximum-Sharpe portfolios |
+| Portfolio theory | Efficient frontier, covariance-aware risk, allocation constraints |
+| Robust estimation | Configurable covariance shrinkage toward a diagonal target |
+| Validation | Static holdout plus rolling no-lookahead walk-forward research |
+| Implementation realism | Rebalancing, one-way turnover, transaction costs |
+| Risk analytics | Volatility, Sharpe, Sortino, drawdown, Calmar, VaR, Expected Shortfall |
+| Benchmarking | Equal-weight comparison and cumulative-wealth analysis |
+| Engineering | Modular Python, automated tests, CI on Python 3.10 and 3.12 |
+| Communication | Professional Streamlit research interface and interactive Plotly charts |
 
-### Efficient Frontier
+## Research workflow
 
-![Efficient frontier with optimized portfolios](screenshots/01_efficient_frontier.png)
+```text
+Historical adjusted prices
+        ↓
+Cleaning and return transformation
+        ↓
+Rolling estimation window
+        ↓
+Expected returns + covariance
+        ↓
+Optional covariance shrinkage
+        ↓
+Constrained optimization
+        ↓
+Target portfolio weights
+        ↓
+Hold until next rebalance
+        ↓
+Turnover + transaction costs
+        ↓
+Net out-of-sample returns
+        ↓
+Risk-adjusted metrics + benchmark comparison
+```
 
-### Portfolio Weights
+The walk-forward path uses only data available **before each rebalance date**. Future observations never enter the estimation window.
 
-![Optimized portfolio allocation](screenshots/02_portfolio_weights.png)
+## Why this is more than a basic Markowitz project
 
-### Historical Backtest
+A common portfolio project estimates one covariance matrix, optimizes once, and reports in-sample results. This repository adds several layers that are more representative of real quantitative research:
 
-![Portfolio backtest](screenshots/03_backtest.png)
+- rolling no-lookahead re-estimation;
+- transaction-cost-aware portfolio implementation;
+- explicit turnover measurement;
+- configurable concentration constraints;
+- covariance shrinkage for estimator stability;
+- separate static holdout and walk-forward views;
+- downside and tail-risk metrics;
+- automated numerical regression tests.
 
-### Interactive Application
+## Interactive research dashboard
 
-![Streamlit portfolio optimizer](screenshots/05_streamlit_app.png)
+Run:
 
-## Optimization Model
-
-For asset weights **w**, expected returns **μ**, and covariance matrix **Σ**, the optimizer minimizes portfolio variance subject to configurable constraints:
-
-~~~text
-minimize    wᵀΣw
-subject to  Σw = 1
-            w ≥ 0
-            μᵀw ≥ target return
-            w ≤ maximum allocation
-~~~
-
-This produces portfolios on the efficient frontier and supports comparison of the minimum-variance and maximum-risk-adjusted-return solutions.
-
-## Run Locally
-
-~~~bash
+```bash
 git clone https://github.com/ParBproject/Portfolio-Optimizer.git
 cd Portfolio-Optimizer
 
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+
 streamlit run app.py
-~~~
+```
 
-Open http://localhost:8501.
+The redesigned dashboard is organized around five research views:
 
-## Repository Structure
+**Efficient Frontier** — opportunity set, capital-market line, minimum-variance and maximum-Sharpe portfolios.
 
-~~~text
+**Portfolio Allocations** — optimized weights, concentration visibility, and side-by-side portfolio structure.
+
+**Walk-Forward Research** — rolling no-lookahead optimization, transaction-cost assumptions, turnover, wealth curves, drawdowns, tail risk, and allocation paths.
+
+**Dependence Structure** — correlation and covariance diagnostics.
+
+**Methodology** — optimization assumptions, robust-estimation choices, validation design, and implementation limitations.
+
+## Efficient frontier
+
+![Efficient frontier](screenshots/01_efficient_frontier.png)
+
+For weights **w**, expected returns **μ**, and covariance matrix **Σ**, the long-only optimizer solves:
+
+```text
+minimize    wᵀΣw
+
+subject to  1ᵀw = 1
+            w ≥ 0
+            w ≤ maximum allocation
+            μᵀw ≥ target return     (frontier points)
+```
+
+The project separately solves the global minimum-variance and maximum-Sharpe portfolios.
+
+## Robust covariance estimation
+
+Historical sample covariance can be noisy, particularly with short windows or correlated assets.
+
+The project provides a transparent shrinkage option:
+
+```text
+Σ_shrunk = (1 - λ) Σ_sample + λ diag(Σ_sample)
+```
+
+where **λ ∈ [0,1]** controls the shrinkage intensity.
+
+This preserves each asset's sample variance while reducing reliance on unstable off-diagonal covariance estimates.
+
+## Walk-forward backtesting
+
+The core research upgrade is implemented in `src/backtest.py`.
+
+At every rebalance:
+
+1. Take only the preceding lookback window.
+2. Estimate expected returns and covariance.
+3. Apply the selected optimization strategy.
+4. Hold the resulting weights until the next rebalance.
+5. Measure portfolio drift and one-way turnover.
+6. Apply transaction costs in basis points.
+7. Record net wealth and realized allocations.
+
+This design avoids using future observations in portfolio construction.
+
+## Risk and performance analytics
+
+The evaluation layer reports:
+
+- annualized return;
+- annualized volatility;
+- Sharpe ratio;
+- Sortino ratio;
+- maximum drawdown;
+- Calmar ratio;
+- 95% historical Value at Risk;
+- 95% historical Expected Shortfall;
+- cumulative wealth;
+- turnover;
+- modeled implementation cost.
+
+## Portfolio allocation
+
+![Portfolio weights](screenshots/02_portfolio_weights.png)
+
+The dashboard displays optimized allocations alongside expected return, volatility, and risk-adjusted performance so the result is interpretable as a portfolio decision rather than only an optimization output.
+
+## Historical performance
+
+![Historical backtest](screenshots/03_backtest.png)
+
+Historical performance is treated as validation evidence—not as a prediction of future returns.
+
+## Repository structure
+
+```text
 Portfolio-Optimizer/
 ├── app.py
+├── data/
+│   └── fetch_data.py
 ├── src/
+│   ├── backtest.py
 │   ├── data_handler.py
 │   ├── metrics.py
 │   ├── optimizer.py
 │   └── visualization.py
+├── tests/
+│   ├── test_backtest.py
+│   └── test_optimizer_metrics.py
 ├── notebooks/
 ├── screenshots/
-└── requirements.txt
-~~~
+├── .streamlit/
+│   └── config.toml
+├── .github/workflows/
+│   └── ci.yml
+├── requirements.txt
+└── requirements-dev.txt
+```
 
-## Skills Demonstrated
+## Quality and reproducibility
 
-Convex optimization, portfolio theory, Python, pandas, NumPy, CVXPY, Plotly, Streamlit, historical data handling, backtesting, and modular application design.
+The automated test suite checks behavior including:
 
-## Assumptions & Limitations
+- portfolio weights remain fully invested;
+- transaction costs reduce terminal wealth when turnover is non-zero;
+- walk-forward research starts only after the estimation lookback;
+- covariance shrinkage preserves individual variances;
+- shrinkage reduces off-diagonal covariance;
+- the selected risk-free rate propagates into reported Sharpe ratios;
+- Expected Shortfall is at least as severe as historical VaR;
+- downside-risk metrics remain numerically well behaved.
 
-Expected returns and covariance are estimated from historical observations and may be unstable. The long-only model excludes taxes and market impact; backtests are sensitive to the selected period and assets. This project is educational and does not constitute financial advice.
+GitHub Actions runs linting, unit tests, compilation, and import checks on Python **3.10 and 3.12**.
+
+## Skills demonstrated
+
+**Quantitative finance:** Markowitz optimization, efficient frontiers, covariance estimation, portfolio constraints, walk-forward research, turnover, transaction costs, VaR, Expected Shortfall.
+
+**Data analysis:** pandas, NumPy, historical market-data transformation, train/test design, correlation analysis, KPI comparison, interactive reporting.
+
+**Numerical computing:** CVXPY, SciPy, matrix operations, constrained optimization, reproducibility.
+
+**Software engineering:** modular Python, regression tests, CI/CD, validation, explicit assumptions, dependency separation.
+
+## Assumptions and limitations
+
+- Expected returns and covariance are historical estimates and are regime-dependent.
+- The backtest models proportional transaction costs but not market impact, taxes, borrow costs, latency, or every institutional constraint.
+- Long-only optimization is used; shorting and leverage are not modeled in the core workflow.
+- Yahoo Finance data may be revised, delayed, or unavailable.
+- Historical and simulated performance does not guarantee future performance.
+
+## Roadmap
+
+- Ledoit-Wolf and alternative covariance estimators
+- risk-parity and maximum-diversification portfolios
+- Black-Litterman expected-return integration
+- rolling factor-exposure diagnostics
+- downloadable research reports
+
+## Disclaimer
+
+Educational quantitative-finance project only. Nothing in this repository is investment advice.
