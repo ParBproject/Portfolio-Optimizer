@@ -27,6 +27,24 @@ This repository goes beyond a standard Markowitz demo. It combines constrained o
 
 ## Research workflow
 
+### Research architecture
+
+```mermaid
+flowchart LR
+    A[Historical Prices] --> B[Returns]
+    B --> C[Expected Returns]
+    B --> D[Covariance]
+    D --> E[Optional Shrinkage]
+    C --> F[Constrained Optimizer]
+    E --> F
+    F --> G[Target Weights]
+    G --> H[Walk-Forward Rebalance]
+    H --> I[Turnover + Transaction Costs]
+    I --> J[Net Out-of-Sample Returns]
+    J --> K[Sharpe / Sortino / VaR / Drawdown]
+```
+
+
 ```text
 Historical adjusted prices
         ↓
