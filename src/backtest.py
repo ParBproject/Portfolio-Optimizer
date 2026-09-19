@@ -209,7 +209,12 @@ def walk_forward_backtest(
                 max_weight=max_weight,
             )
         else:
-            result = min_variance(mu, cov, max_weight=max_weight)
+            result = min_variance(
+                mu,
+                cov,
+                max_weight=max_weight,
+                risk_free_rate=risk_free_rate,
+            )
 
         weights = result.get("weights")
         if weights is None:
