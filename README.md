@@ -1,5 +1,12 @@
 # Markowitz Portfolio Optimizer
 
+## For a data analyst application
+
+**Supporting finance piece.** Mean-variance optimization with an explicit benchmark. Show the frontier and the weight chart if the role is portfolio analytics. It is not the operations or SQL case study.
+
+<p align="center"><img src="screenshots/01_efficient_frontier.png" alt="Efficient frontier" width="100%"></p>
+<p align="center"><img src="screenshots/05_streamlit_app.png" alt="Portfolio optimizer dashboard" width="100%"></p>
+
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](requirements.txt)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Interactive_App-FF4B4B?logo=streamlit&logoColor=white)](app.py)
 [![CVXPY](https://img.shields.io/badge/Optimization-CVXPY-1f6feb)](src/optimizer.py)
