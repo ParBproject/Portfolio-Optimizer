@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 
 from src.data_handler import load_data, simulate_random_portfolios
 from src.optimizer    import min_variance, max_sharpe, efficient_frontier
@@ -86,10 +85,18 @@ if run_btn:
         tickers = data["tickers"]
 
         # ── Optimisation ──────────────────────────────────────────────────────
-        gmvp = min_variance(mu, cov, max_weight=max_weight)
-        msr  = max_sharpe(mu, cov, risk_free_rate=risk_free, max_weight=max_weight)
-        ef   = efficient_frontier(mu, cov, n_points=n_frontier, max_weight=max_weight, risk_free_rate=risk_free)
-        rand = simulate_random_portfolios(mu, cov, n_portfolios=n_random, risk_free_rate=risk_free)
+        try:
+            gmvp = min_variance(mu, cov, max_weight=max_weight, risk_free_rate=risk_free)
+            msr  = max_sharpe(mu, cov, risk_free_rate=risk_free, max_weight=max_weight)
+            ef   = efficient_frontier(
+                mu, cov, n_points=n_frontier, max_weight=max_weight, risk_free_rate=risk_free,
+            )
+            rand = simulate_random_portfolios(
+                mu, cov, n_portfolios=n_random, risk_free_rate=risk_free,
+            )
+        except Exception as e:
+            st.error(f"Optimisation error: {e}")
+            st.stop()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs(
@@ -112,7 +119,7 @@ if run_btn:
                 st.metric("Sharpe",  f"{gmvp['sharpe']:.3f}")
                 st.plotly_chart(plot_weights(gmvp["weights"], "GMVP Weights"), use_container_width=True)
             else:
-                st.warning("GMVP could not be solved.")
+                st.warning(f"Minimum-variance portfolio was not solved ({gmvp.get('status')}).")
 
         with col_s:
             st.subheader("🔴 Maximum Sharpe Ratio")
@@ -122,7 +129,7 @@ if run_btn:
                 st.metric("Sharpe",  f"{msr['sharpe']:.3f}")
                 st.plotly_chart(plot_weights(msr["weights"], "MSR Weights"), use_container_width=True)
             else:
-                st.warning("MSR portfolio could not be solved.")
+                st.warning(f"Maximum-Sharpe portfolio was not solved ({msr.get('status')}).")
 
     # ── Tab 3: Backtest ────────────────────────────────────────────────────────
     with tab3:
@@ -134,21 +141,23 @@ if run_btn:
             n_assets = len(tickers)
 
             if gmvp["weights"] is not None:
-                dr = portfolio_daily_returns(gmvp["weights"].values, test_returns)
-                portfolios_dr["GMVP"] = pd.Series(dr, index=test_returns.index)
+                portfolios_dr["GMVP"] = portfolio_daily_returns(gmvp["weights"], test_returns)
 
             if msr["weights"] is not None:
-                dr = portfolio_daily_returns(msr["weights"].values, test_returns)
-                portfolios_dr["Max Sharpe"] = pd.Series(dr, index=test_returns.index)
+                portfolios_dr["Max Sharpe"] = portfolio_daily_returns(msr["weights"], test_returns)
 
-            # Equal-weight benchmark
-            eq_w = np.ones(n_assets) / n_assets
-            dr   = portfolio_daily_returns(eq_w, test_returns)
-            portfolios_dr["Equal Weight"] = pd.Series(dr, index=test_returns.index)
+            # Equal-weight benchmark. Daily rebalance to these weights, no costs.
+            eq_w = pd.Series(1.0 / n_assets, index=test_returns.columns)
+            portfolios_dr["Equal Weight"] = portfolio_daily_returns(eq_w, test_returns)
 
             # Cumulative wealth
             cum_returns = {k: cumulative_wealth(v) for k, v in portfolios_dr.items()}
 
+            st.caption(
+                "Weights are held constant and rebalanced daily. "
+                "No transaction costs or taxes. "
+                "Expected returns and covariance use only the training window."
+            )
             st.plotly_chart(plot_backtest(cum_returns), use_container_width=True)
             st.plotly_chart(plot_drawdown(portfolios_dr), use_container_width=True)
 

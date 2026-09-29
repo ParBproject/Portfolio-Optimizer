@@ -14,6 +14,57 @@ DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "JPM", "SPY"]
 DEFAULT_START   = "2015-01-01"
 DEFAULT_END     = "2024-12-31"
 CACHE_DIR       = os.path.join(os.path.dirname(__file__), "cache")
+# Holidays and long weekends only. A longer gap is left missing so a halt
+# is not turned into a streak of zero returns.
+MAX_FFILL_DAYS  = 5
+
+
+def clean_prices(prices: pd.DataFrame, max_ffill: int = MAX_FFILL_DAYS) -> pd.DataFrame:
+    """Forward-fill short gaps, then drop any row that is still incomplete.
+
+    Filling is strictly backward-looking and stops after ``max_ffill`` sessions.
+    """
+    if prices.empty:
+        raise ValueError("No price rows to clean.")
+    ordered = prices.sort_index()
+    entirely_missing = [str(col) for col in ordered.columns if ordered[col].isna().all()]
+    if entirely_missing:
+        raise ValueError(f"No prices for {entirely_missing}.")
+    cleaned = ordered.ffill(limit=max_ffill).dropna(how="any")
+    if cleaned.empty:
+        raise ValueError(
+            "No overlapping price history after cleaning gaps longer than "
+            f"{max_ffill} sessions."
+        )
+    return cleaned
+
+
+def extract_close(raw: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
+    """Pull adjusted closes out of the frames yfinance has used over time.
+
+    Handles a flat Close column, a (field, ticker) MultiIndex, and a
+    (ticker, field) MultiIndex. Columns are returned in ``tickers`` order.
+    """
+    if raw is None or raw.empty:
+        raise ValueError(f"No price data returned for {tickers}.")
+    columns = raw.columns
+    if isinstance(columns, pd.MultiIndex):
+        level0 = set(columns.get_level_values(0))
+        level1 = set(columns.get_level_values(1))
+        if "Close" in level0:
+            prices = raw["Close"]
+        elif "Close" in level1:
+            prices = raw.xs("Close", axis=1, level=1)
+        else:
+            raise ValueError("Downloaded data has no Close column.")
+    else:
+        if "Close" not in raw.columns:
+            raise ValueError("Downloaded data has no Close column.")
+        prices = raw[["Close"]].rename(columns={"Close": tickers[0]})
+    missing = [ticker for ticker in tickers if ticker not in prices.columns]
+    if missing:
+        raise ValueError(f"No prices for {missing}.")
+    return clean_prices(prices.loc[:, tickers])
 
 
 def download_prices(
@@ -24,6 +75,9 @@ def download_prices(
 ) -> pd.DataFrame:
     """
     Download adjusted close prices for *tickers* between *start* and *end*.
+
+    With ``auto_adjust=True``, yfinance's Close column is split- and
+    dividend-adjusted. ``end`` is exclusive, matching yfinance.
 
     Parameters
     ----------
@@ -45,15 +99,7 @@ def download_prices(
 
     print(f"[yfinance] Downloading {tickers} from {start} to {end} …")
     raw = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)
-
-    # yfinance returns a MultiIndex when >1 ticker; grab "Close" level
-    if isinstance(raw.columns, pd.MultiIndex):
-        prices = raw["Close"][tickers]
-    else:
-        prices = raw[["Close"]].rename(columns={"Close": tickers[0]})
-
-    # Forward-fill small gaps (e.g. staggered exchange holidays), then drop NaNs
-    prices = prices.ffill().dropna()
+    prices = extract_close(raw, list(tickers))
 
     if cache:
         prices.to_csv(cache_path)
