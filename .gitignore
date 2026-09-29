@@ -19,6 +19,9 @@ env/
 .env.*
 !.env.example
 
+# Downloaded price cache
+data/cache/
+
 # Notebooks and generated local state
 .ipynb_checkpoints/
 .streamlit/secrets.toml
