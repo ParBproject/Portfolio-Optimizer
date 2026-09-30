@@ -36,3 +36,6 @@ jobs:
 
       - name: Test
         run: python -m pytest -q
+
+      - name: Build the GitHub Pages demo
+        run: python scripts/build_demo.py --out "${{ runner.temp }}/portfolio-demo"

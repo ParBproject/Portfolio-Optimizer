@@ -1,0 +1,19 @@
+{
+  "source": "Yahoo Finance",
+  "adjustment": "split- and dividend-adjusted Close (yfinance auto_adjust=True)",
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "JPM",
+    "SPY"
+  ],
+  "request_start": "2015-01-01",
+  "request_end_exclusive": "2025-01-01",
+  "first_session": "2015-01-02",
+  "last_session": "2024-12-31",
+  "downloaded_on": "2026-09-30",
+  "rows": 2516,
+  "note": "Static snapshot for the in-browser demo. Local runs download live prices from Yahoo Finance."
+}

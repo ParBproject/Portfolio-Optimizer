@@ -19,8 +19,11 @@ env/
 .env.*
 !.env.example
 
-# Downloaded price cache
+# Downloaded price cache. The committed browser snapshot lives in data/snapshot/.
 data/cache/
+
+# Generated GitHub Pages site (scripts/build_demo.py)
+site/
 
 # Notebooks and generated local state
 .ipynb_checkpoints/

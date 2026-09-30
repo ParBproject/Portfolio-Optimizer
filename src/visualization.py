@@ -17,6 +17,32 @@ GMVP_COLOR   = "#00CC66"   # green
 MSR_COLOR    = "#FF4136"   # red
 FRONTIER_CLR = "#003366"   # dark blue
 BG_COLOR     = "#F8F9FA"
+EMERALD      = "#10B981"
+
+
+def _chrome(theme: str) -> dict:
+    """Light charts match the README figures. The browser demo asks for dark."""
+    if theme == "dark":
+        return {
+            "paper": "#0B1220",
+            "plot": "#111827",
+            "grid": "#1F2937",
+            "font": "#E5E7EB",
+            "frontier": EMERALD,
+            "gmvp": EMERALD,
+            "msr": "#FB7185",
+            "annot": "#9CA3AF",
+        }
+    return {
+        "paper": "white",
+        "plot": BG_COLOR,
+        "grid": "#E8E8E8",
+        "font": None,
+        "frontier": FRONTIER_CLR,
+        "gmvp": GMVP_COLOR,
+        "msr": MSR_COLOR,
+        "annot": "grey",
+    }
 
 
 def plot_efficient_frontier(
@@ -27,6 +53,7 @@ def plot_efficient_frontier(
     tickers: list[str] | None = None,
     risk_free_rate: float = 0.04,
     title: str = "Efficient Frontier",
+    theme: str = "light",
 ) -> go.Figure:
     """
     Interactive Plotly scatter of the Efficient Frontier.
@@ -48,6 +75,7 @@ def plot_efficient_frontier(
     plotly.graph_objects.Figure
     """
     fig = go.Figure()
+    chrome = _chrome(theme)
 
     # ── Random portfolios (background cloud) ───────────────────────────────────
     if random_df is not None and len(random_df):
@@ -75,8 +103,8 @@ def plot_efficient_frontier(
     fig.add_trace(go.Scatter(
         x=frontier_df["vol"], y=frontier_df["ret"],
         mode="lines+markers",
-        line=dict(color=FRONTIER_CLR, width=3),
-        marker=dict(size=5, color=FRONTIER_CLR),
+        line=dict(color=chrome["frontier"], width=3),
+        marker=dict(size=5, color=chrome["frontier"]),
         text=hover_ef,
         hovertemplate="%{text}<extra>Efficient Frontier</extra>",
         name="Efficient Frontier",
@@ -96,7 +124,7 @@ def plot_efficient_frontier(
         fig.add_trace(go.Scatter(
             x=x_cml, y=y_cml,
             mode="lines",
-            line=dict(color=MSR_COLOR, dash="dash", width=1.5),
+            line=dict(color=chrome["msr"], dash="dash", width=1.5),
             name="Capital allocation line",
         ))
 
@@ -111,7 +139,7 @@ def plot_efficient_frontier(
         fig.add_trace(go.Scatter(
             x=[gmvp["vol"]], y=[gmvp["ret"]],
             mode="markers",
-            marker=dict(size=18, color=GMVP_COLOR, symbol="diamond", line=dict(width=2, color="white")),
+            marker=dict(size=18, color=chrome["gmvp"], symbol="diamond", line=dict(width=2, color="white")),
             name="Min Variance",
             hovertemplate=hover + "<extra></extra>",
         ))
@@ -127,7 +155,7 @@ def plot_efficient_frontier(
         fig.add_trace(go.Scatter(
             x=[msr["vol"]], y=[msr["ret"]],
             mode="markers",
-            marker=dict(size=22, color=MSR_COLOR, symbol="star", line=dict(width=2, color="white")),
+            marker=dict(size=22, color=chrome["msr"], symbol="star", line=dict(width=2, color="white")),
             name="Max Sharpe",
             hovertemplate=hover + "<extra></extra>",
         ))
@@ -135,42 +163,62 @@ def plot_efficient_frontier(
     # ── Risk-free rate annotation ──────────────────────────────────────────────
     fig.add_annotation(
         x=0, y=risk_free_rate, text=f"Rf={risk_free_rate:.1%}",
-        showarrow=False, font=dict(size=11, color="grey"),
+        showarrow=False, font=dict(size=11, color=chrome["annot"]),
         xanchor="left", yanchor="bottom",
     )
 
-    fig.update_layout(
+    layout = dict(
         title=dict(text=title, font=dict(size=22)),
-        xaxis=dict(title="Annualised Volatility (σ)", tickformat=".1%", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Annualised Expected Return (μ)", tickformat=".1%", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, paper_bgcolor="white",
+        xaxis=dict(title="Annualised Volatility (σ)", tickformat=".1%", gridcolor=chrome["grid"]),
+        yaxis=dict(title="Annualised Expected Return (μ)", tickformat=".1%", gridcolor=chrome["grid"]),
+        plot_bgcolor=chrome["plot"], paper_bgcolor=chrome["paper"],
         legend=dict(orientation="h", y=-0.15, x=0.0),
         hovermode="closest",
         width=950, height=620,
     )
+    if chrome["font"]:
+        layout["font"] = dict(color=chrome["font"])
+    fig.update_layout(**layout)
     return fig
 
 
-def plot_weights(weights: pd.Series, title: str = "Portfolio Weights") -> go.Figure:
+def plot_weights(
+    weights: pd.Series,
+    title: str = "Portfolio Weights",
+    theme: str = "light",
+) -> go.Figure:
     """Bar chart of portfolio weights."""
+    chrome = _chrome(theme)
     sorted_w = weights.sort_values(ascending=False)
-    colors = px.colors.qualitative.Bold[:len(sorted_w)]
+    if theme == "dark":
+        palette = ["#10B981", "#34D399", "#6EE7B7", "#059669", "#2DD4BF", "#A7F3D0"]
+        colors = [palette[i % len(palette)] for i in range(len(sorted_w))]
+    else:
+        colors = px.colors.qualitative.Bold[:len(sorted_w)]
     fig = go.Figure(go.Bar(
         x=sorted_w.index, y=sorted_w.values,
         marker_color=colors,
         text=[f"{v:.1%}" for v in sorted_w.values],
         textposition="outside",
     ))
-    fig.update_layout(
-        title=title, yaxis=dict(title="Weight", tickformat=".0%", range=[0, sorted_w.max() * 1.2]),
-        plot_bgcolor=BG_COLOR, width=700, height=420,
+    layout = dict(
+        title=title,
+        yaxis=dict(title="Weight", tickformat=".0%", range=[0, sorted_w.max() * 1.2]),
+        plot_bgcolor=chrome["plot"],
+        paper_bgcolor=chrome["paper"],
+        width=700,
+        height=420,
     )
+    if chrome["font"]:
+        layout["font"] = dict(color=chrome["font"])
+    fig.update_layout(**layout)
     return fig
 
 
 def plot_backtest(
     cum_returns: dict[str, pd.Series],
     title: str = "Out-of-Sample Cumulative Returns",
+    theme: str = "light",
 ) -> go.Figure:
     """
     Overlay multiple cumulative return series.
@@ -179,7 +227,11 @@ def plot_backtest(
     ----------
     cum_returns : {label: cumulative_wealth_series}
     """
-    palette = px.colors.qualitative.Safe
+    chrome = _chrome(theme)
+    if theme == "dark":
+        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4"]
+    else:
+        palette = px.colors.qualitative.Safe
     fig = go.Figure()
     for i, (label, series) in enumerate(cum_returns.items()):
         fig.add_trace(go.Scatter(
@@ -188,24 +240,34 @@ def plot_backtest(
             line=dict(width=2.5, color=palette[i % len(palette)]),
             hovertemplate=f"<b>{label}</b><br>Date: %{{x|%Y-%m-%d}}<br>Value: %{{y:.3f}}<extra></extra>",
         ))
-    fig.add_hline(y=1.0, line_dash="dot", line_color="grey", annotation_text="Start")
-    fig.update_layout(
+    fig.add_hline(y=1.0, line_dash="dot", line_color=chrome["annot"], annotation_text="Start")
+    layout = dict(
         title=title,
-        xaxis=dict(title="Date", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Cumulative Wealth ($1 start)", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, legend=dict(orientation="h", y=-0.15),
+        xaxis=dict(title="Date", gridcolor=chrome["grid"]),
+        yaxis=dict(title="Cumulative Wealth ($1 start)", gridcolor=chrome["grid"]),
+        plot_bgcolor=chrome["plot"],
+        paper_bgcolor=chrome["paper"],
+        legend=dict(orientation="h", y=-0.15),
         width=950, height=520,
     )
+    if chrome["font"]:
+        layout["font"] = dict(color=chrome["font"])
+    fig.update_layout(**layout)
     return fig
 
 
 def plot_drawdown(
     daily_returns_dict: dict[str, pd.Series],
     title: str = "Drawdown",
+    theme: str = "light",
 ) -> go.Figure:
     """Drawdown chart for one or more portfolios."""
     from src.metrics import cumulative_wealth
-    palette = px.colors.qualitative.Safe
+    chrome = _chrome(theme)
+    if theme == "dark":
+        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4"]
+    else:
+        palette = px.colors.qualitative.Safe
     fig = go.Figure()
     for i, (label, dr) in enumerate(daily_returns_dict.items()):
         cum  = cumulative_wealth(dr)
@@ -216,17 +278,27 @@ def plot_drawdown(
             mode="lines", name=label, fill="tozeroy",
             line=dict(color=palette[i % len(palette)], width=1.5),
         ))
-    fig.update_layout(
+    layout = dict(
         title=title,
-        xaxis=dict(title="Date", gridcolor="#E8E8E8"),
-        yaxis=dict(title="Drawdown", tickformat=".1%", gridcolor="#E8E8E8"),
-        plot_bgcolor=BG_COLOR, width=950, height=380,
+        xaxis=dict(title="Date", gridcolor=chrome["grid"]),
+        yaxis=dict(title="Drawdown", tickformat=".1%", gridcolor=chrome["grid"]),
+        plot_bgcolor=chrome["plot"],
+        paper_bgcolor=chrome["paper"],
+        width=950, height=380,
     )
+    if chrome["font"]:
+        layout["font"] = dict(color=chrome["font"])
+    fig.update_layout(**layout)
     return fig
 
 
-def plot_correlation_heatmap(returns: pd.DataFrame, title: str = "Asset Correlation Matrix") -> go.Figure:
+def plot_correlation_heatmap(
+    returns: pd.DataFrame,
+    title: str = "Asset Correlation Matrix",
+    theme: str = "light",
+) -> go.Figure:
     """Annotated correlation heatmap."""
+    chrome = _chrome(theme)
     corr = returns.corr()
     fig = go.Figure(go.Heatmap(
         z=corr.values, x=corr.columns, y=corr.index,
@@ -235,7 +307,11 @@ def plot_correlation_heatmap(returns: pd.DataFrame, title: str = "Asset Correlat
         texttemplate="%{text}", textfont=dict(size=12),
         hoverongaps=False,
     ))
-    fig.update_layout(title=title, width=600, height=550)
+    layout = dict(title=title, width=600, height=550)
+    if theme == "dark":
+        layout["paper_bgcolor"] = chrome["paper"]
+        layout["font"] = dict(color=chrome["font"])
+    fig.update_layout(**layout)
     return fig
 
 

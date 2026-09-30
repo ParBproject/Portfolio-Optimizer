@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import cvxpy as cp
 from scipy.optimize import minimize
+
+try:
+    import cvxpy as cp
+except ImportError:  # Pyodide has SciPy, not CVXPY. The browser demo uses SLSQP.
+    cp = None
 
 _OPTIMAL = {"optimal", "optimal_inaccurate"}
 _INFEASIBLE = {
@@ -174,6 +178,14 @@ def min_variance(
     ``risk_free_rate`` does not change the weights. It is used only for the
     reported Sharpe ratio, and it must be the same rate used everywhere else.
     """
+    if cp is None:
+        return min_variance_scipy(
+            mu,
+            cov,
+            target_return=target_return,
+            max_weight=max_weight,
+            risk_free_rate=risk_free_rate,
+        )
     mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
     if error:
         return _failure(error)
@@ -201,6 +213,89 @@ def min_variance(
     return _result(cleaned, mu_arr, cov_arr, risk_free_rate, status)
 
 
+def _max_sharpe_qp(
+    mu: np.ndarray | pd.Series,
+    cov: np.ndarray | pd.DataFrame,
+    risk_free_rate: float = 0.04,
+    max_weight: float | None = None,
+) -> dict:
+    """Same maximum-Sharpe quadratic programme as the CVXPY solver, via SLSQP.
+
+    Used when CVXPY is not installed (the in-browser demo). The programme is
+    the one documented on ``max_sharpe``: minimise yᵀ Σ y subject to
+    (μ − rf)ᵀ y = 1 and y ≥ 0, then normalise. It is not the direct
+    negative-Sharpe objective in ``max_sharpe_scipy``.
+    """
+    mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
+    if error:
+        return _failure(error)
+    n = len(mu_arr)
+    if _cap_infeasible(n, max_weight):
+        return _failure("infeasible_max_weight")
+    excess = mu_arr - float(risk_free_rate)
+    if np.all(excess <= 0):
+        return _failure("no_positive_excess_return")
+
+    y0 = _feasible_sharpe_direction(excess, max_weight)
+    if y0 is None:
+        return _failure("no_positive_excess_return")
+
+    def objective(y):
+        return float(y @ cov_arr @ y)
+
+    def gradient(y):
+        return 2.0 * cov_arr @ y
+
+    constraints: list[dict] = [{"type": "eq", "fun": lambda y: float(excess @ y - 1.0)}]
+    if max_weight is not None:
+        cap = float(max_weight)
+
+        def cap_fun(index: int, limit: float):
+            def fun(y, index=index, limit=limit):
+                return limit * float(np.sum(y)) - float(y[index])
+
+            return fun
+
+        for i in range(n):
+            constraints.append({"type": "ineq", "fun": cap_fun(i, cap)})
+
+    res = minimize(
+        objective,
+        y0,
+        jac=gradient,
+        method="SLSQP",
+        bounds=[(0.0, None)] * n,
+        constraints=constraints,
+        options={"ftol": 1e-12, "maxiter": 1000, "disp": False},
+    )
+    if not res.success:
+        return _failure(str(res.message))
+    cleaned = _finalize_weights(res.x, tickers, max_weight, expect_simplex=False)
+    if cleaned is None:
+        return _failure("invalid_weights")
+    return _result(cleaned, mu_arr, cov_arr, risk_free_rate, "optimal")
+
+
+def _feasible_sharpe_direction(excess: np.ndarray, max_weight: float | None) -> np.ndarray | None:
+    """A y ≥ 0 with (μ − rf)ᵀ y = 1 that already respects an optional name cap."""
+    n = len(excess)
+    cap = 1.0 if max_weight is None else float(max_weight)
+    weights = np.zeros(n)
+    remaining = 1.0
+    for index in np.argsort(excess)[::-1]:
+        if excess[index] <= 0 or remaining <= 1e-12:
+            break
+        take = min(cap, remaining)
+        weights[index] = take
+        remaining -= take
+    if float(weights.sum()) <= 1e-12:
+        return None
+    scale = float(excess @ weights)
+    if scale <= 1e-12:
+        return None
+    return weights / scale
+
+
 def max_sharpe(
     mu: np.ndarray | pd.Series,
     cov: np.ndarray | pd.DataFrame,
@@ -208,6 +303,13 @@ def max_sharpe(
     max_weight: float | None = None,
 ) -> dict:
     """Long-only maximum Sharpe portfolio. Infeasible problems return weights=None."""
+    if cp is None:
+        return _max_sharpe_qp(
+            mu,
+            cov,
+            risk_free_rate=risk_free_rate,
+            max_weight=max_weight,
+        )
     mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
     if error:
         return _failure(error)
@@ -307,17 +409,28 @@ def min_variance_scipy(
         constraints.append({"type": "ineq", "fun": lambda w, target=target: w @ mu_arr - target})
 
     upper = 1.0 if max_weight is None else float(max_weight)
-    res = minimize(
-        portfolio_variance,
-        np.ones(n) / n,
-        jac=grad_variance,
-        method="SLSQP",
-        bounds=[(0.0, upper)] * n,
-        constraints=constraints,
-        options={"ftol": 1e-12, "maxiter": 1000, "disp": False},
-    )
-    if not res.success:
-        return _failure(str(res.message))
+    # A tight tolerance sometimes stops on a feasible point and reports a
+    # line-search failure. Retry, then try a start tilted to higher-return names.
+    starts = [np.ones(n) / n]
+    greedy = _feasible_sharpe_direction(mu_arr - float(np.min(mu_arr)) + 1.0, max_weight)
+    if greedy is not None:
+        greedy = greedy / greedy.sum()
+        starts.append(greedy)
+    res = None
+    for ftol, start in ((1e-12, starts[0]), (1e-9, starts[0]), *[(1e-9, s) for s in starts[1:]]):
+        res = minimize(
+            portfolio_variance,
+            start,
+            jac=grad_variance,
+            method="SLSQP",
+            bounds=[(0.0, upper)] * n,
+            constraints=constraints,
+            options={"ftol": ftol, "maxiter": 1000, "disp": False},
+        )
+        if res.success:
+            break
+    if res is None or not res.success:
+        return _failure("solver_error" if res is None else str(res.message))
     cleaned = _finalize_weights(res.x, tickers, max_weight, expect_simplex=True)
     if cleaned is None:
         return _failure("invalid_weights")
