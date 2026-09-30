@@ -147,6 +147,50 @@ def test_optimised_sharpe_matches_the_realized_sample():
     assert sharpe_ratio(portfolio, rf) == pytest.approx(result["sharpe"], abs=1e-8)
 
 
+def test_browser_solver_matches_cvxpy(monkeypatch):
+    """Pyodide has no CVXPY. SLSQP has to hit the same portfolios."""
+    import src.optimizer as opt
+
+    mu, cov = _two_asset()
+    cvx_min = opt.min_variance(mu, cov, risk_free_rate=0.02)
+    cvx_sharpe = opt.max_sharpe(mu, cov, risk_free_rate=0.02)
+    cvx_capped = opt.max_sharpe(mu, cov, risk_free_rate=0.0, max_weight=0.5)
+    frontier = opt.efficient_frontier(mu, cov, n_points=8, risk_free_rate=0.02)
+
+    monkeypatch.setattr(opt, "cp", None)
+    sci_min = opt.min_variance(mu, cov, risk_free_rate=0.02)
+    sci_sharpe = opt.max_sharpe(mu, cov, risk_free_rate=0.02)
+    sci_capped = opt.max_sharpe(mu, cov, risk_free_rate=0.0, max_weight=0.5)
+    sci_frontier = opt.efficient_frontier(mu, cov, n_points=8, risk_free_rate=0.02)
+    blocked = opt.min_variance(mu, cov, max_weight=0.1)
+    underwater = opt.max_sharpe(pd.Series([0.01, 0.02]), cov, risk_free_rate=0.05)
+
+    assert sci_min["weights"].to_numpy() == pytest.approx(cvx_min["weights"].to_numpy(), abs=1e-5)
+    assert sci_sharpe["weights"].to_numpy() == pytest.approx(
+        cvx_sharpe["weights"].to_numpy(), abs=1e-4
+    )
+    assert sci_capped["weights"].to_numpy() == pytest.approx(cvx_capped["weights"].to_numpy(), abs=1e-4)
+    assert sci_frontier[["ret", "vol"]].to_numpy() == pytest.approx(
+        frontier[["ret", "vol"]].to_numpy(), abs=1e-4
+    )
+    assert blocked["weights"] is None
+    assert blocked["status"] == "infeasible_max_weight"
+    assert underwater["weights"] is None
+    assert underwater["status"] == "no_positive_excess_return"
+
+
+def test_dark_demo_charts_use_the_emerald_accent():
+    mu, cov = _two_asset()
+    gmvp = min_variance(mu, cov, risk_free_rate=0.01)
+    msr = max_sharpe(mu, cov, risk_free_rate=0.01)
+    frontier = efficient_frontier(mu, cov, n_points=8, risk_free_rate=0.01)
+    fig = plot_efficient_frontier(frontier, None, gmvp, msr, risk_free_rate=0.01, theme="dark")
+    curve = next(trace for trace in fig.data if trace.name == "Efficient Frontier")
+    assert curve.line.color == "#10B981"
+    assert fig.layout.paper_bgcolor == "#0B1220"
+    assert fig.layout.plot_bgcolor == "#111827"
+
+
 def test_capital_allocation_line_stops_at_the_tangency_portfolio():
     mu, cov = _two_asset()
     gmvp = min_variance(mu, cov, risk_free_rate=0.01)

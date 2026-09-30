@@ -1,5 +1,9 @@
 # Markowitz Portfolio Optimizer
 
+[![Live demo](https://img.shields.io/badge/Live_demo-open_in_the_browser-10B981?style=for-the-badge)](https://parbproject.github.io/Portfolio-Optimizer/)
+
+**[Live demo](https://parbproject.github.io/Portfolio-Optimizer/)** — the Streamlit app running in your browser. No sign-in and no server. Prices are a static Yahoo Finance snapshot, and the page states that date range. `streamlit run app.py` still downloads live prices.
+
 ## For a data analyst application
 
 **Supporting finance piece.** Mean-variance optimization with an equal-weight benchmark. Show the frontier and the weight chart if the role is portfolio analytics. It is not the operations or SQL case study.
@@ -106,12 +110,15 @@ Portfolio-Optimizer/
 │   ├── optimizer.py
 │   └── visualization.py
 ├── data/
-│   └── fetch_data.py
+│   ├── fetch_data.py
+│   └── snapshot/          # bundled prices for the browser demo
 ├── notebooks/
 ├── scripts/render_figures.py
+├── scripts/build_demo.py  # static site for GitHub Pages
 ├── tests/
 ├── screenshots/
 ├── .github/workflows/ci.yml
+├── .github/workflows/pages.yml
 └── requirements.txt
 ~~~
 
@@ -126,6 +133,7 @@ Convex optimization, portfolio theory, Python, pandas, NumPy, CVXPY, Plotly, Str
 - Volatility uses the sample standard deviation (divisor T − 1), so it matches the square root of the annualised sample variance.
 - Prices are forward-filled for at most five sessions. Longer gaps are dropped rather than carried forward as a flat price.
 - The reported μ and Σ use only returns on or before the split date. The test window is every later session. The default split date in the app is 2023-12-31; the first test return is the next session, including when that date is not itself a trading day.
+- The [live demo](https://parbproject.github.io/Portfolio-Optimizer/) is this same app, packaged with [stlite](https://github.com/whitphx/stlite) so it runs in the browser. Browsers cannot call Yahoo Finance, so the demo reads `data/snapshot` and labels that snapshot's date range. A local run still uses live Yahoo Finance. The in-browser optimiser solves the same quadratic programmes with SciPy SLSQP, because CVXPY's compiled solvers are not available in Pyodide.
 - The app does one split. The backtest notebook can refit the maximum-Sharpe portfolio at each out-of-sample month using only data from before that month.
 - Long only, fully invested, optional per-name cap. No leverage, shorts, taxes, or market impact.
 - Expected returns and covariances estimated this way are noisy. This project is educational and does not constitute financial advice.

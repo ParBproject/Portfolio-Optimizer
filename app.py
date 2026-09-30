@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import streamlit as st
 import pandas as pd
 
+from data.fetch_data import price_source, snapshot_label
 from src.data_handler import load_data, simulate_random_portfolios
 from src.optimizer    import min_variance, max_sharpe, efficient_frontier
 from src.metrics      import (
@@ -27,6 +28,12 @@ from src.visualization import (
     plot_efficient_frontier, plot_weights, plot_backtest,
     plot_drawdown, plot_correlation_heatmap,
 )
+
+# The browser demo cannot reach Yahoo Finance. Local runs leave this false
+# and keep the live download path, including the light chart colours used
+# for the README figures.
+_SNAPSHOT = price_source() == "snapshot"
+_THEME = "dark" if _SNAPSHOT else "light"
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -42,9 +49,17 @@ st.markdown(
     "Global Minimum Variance, and Maximum Sharpe Ratio portfolios."
 )
 
+if _SNAPSHOT:
+    st.warning(snapshot_label())
+
 # ── Sidebar inputs ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Configuration")
+    if _SNAPSHOT:
+        st.caption(
+            "Browser demo: only the bundled snapshot is available. "
+            "Its date range is shown above. Other symbols need a local run."
+        )
 
     tickers_raw = st.text_input(
         "Tickers (comma-separated)",
@@ -105,7 +120,7 @@ if run_btn:
 
     # ── Tab 1: Frontier ────────────────────────────────────────────────────────
     with tab1:
-        fig = plot_efficient_frontier(ef, rand, gmvp, msr, tickers, risk_free)
+        fig = plot_efficient_frontier(ef, rand, gmvp, msr, tickers, risk_free, theme=_THEME)
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Tab 2: Portfolio details ───────────────────────────────────────────────
@@ -117,7 +132,10 @@ if run_btn:
                 st.metric("Return",  f"{gmvp['ret']:.2%}")
                 st.metric("Vol",     f"{gmvp['vol']:.2%}")
                 st.metric("Sharpe",  f"{gmvp['sharpe']:.3f}")
-                st.plotly_chart(plot_weights(gmvp["weights"], "GMVP Weights"), use_container_width=True)
+                st.plotly_chart(
+                    plot_weights(gmvp["weights"], "GMVP Weights", theme=_THEME),
+                    use_container_width=True,
+                )
             else:
                 st.warning(f"Minimum-variance portfolio was not solved ({gmvp.get('status')}).")
 
@@ -127,7 +145,10 @@ if run_btn:
                 st.metric("Return",  f"{msr['ret']:.2%}")
                 st.metric("Vol",     f"{msr['vol']:.2%}")
                 st.metric("Sharpe",  f"{msr['sharpe']:.3f}")
-                st.plotly_chart(plot_weights(msr["weights"], "MSR Weights"), use_container_width=True)
+                st.plotly_chart(
+                    plot_weights(msr["weights"], "MSR Weights", theme=_THEME),
+                    use_container_width=True,
+                )
             else:
                 st.warning(f"Maximum-Sharpe portfolio was not solved ({msr.get('status')}).")
 
@@ -158,8 +179,8 @@ if run_btn:
                 "No transaction costs or taxes. "
                 "Expected returns and covariance use only the training window."
             )
-            st.plotly_chart(plot_backtest(cum_returns), use_container_width=True)
-            st.plotly_chart(plot_drawdown(portfolios_dr), use_container_width=True)
+            st.plotly_chart(plot_backtest(cum_returns, theme=_THEME), use_container_width=True)
+            st.plotly_chart(plot_drawdown(portfolios_dr, theme=_THEME), use_container_width=True)
 
             # Metrics table
             df_metrics, fmt = compare_portfolios(portfolios_dr, risk_free_rate=risk_free)
@@ -171,7 +192,7 @@ if run_btn:
 
     # ── Tab 4: Correlations ────────────────────────────────────────────────────
     with tab4:
-        fig_corr = plot_correlation_heatmap(data["train_returns"])
+        fig_corr = plot_correlation_heatmap(data["train_returns"], theme=_THEME)
         st.plotly_chart(fig_corr, use_container_width=True)
 
 else:
