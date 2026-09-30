@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from plotly.subplots import make_subplots
 
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
@@ -41,7 +40,7 @@ def plot_efficient_frontier(
     gmvp         : dict from optimizer.min_variance() – Global Min Variance
     msr          : dict from optimizer.max_sharpe()   – Max Sharpe Ratio
     tickers      : list of asset names (for hover labels)
-    risk_free_rate: for Capital Market Line
+    risk_free_rate: for the capital allocation line (cash to the max-Sharpe portfolio)
     title        : figure title
 
     Returns
@@ -83,16 +82,22 @@ def plot_efficient_frontier(
         name="Efficient Frontier",
     ))
 
-    # ── Capital Market Line ────────────────────────────────────────────────────
-    if msr is not None and msr.get("weights") is not None:
-        x_cml = np.array([0, frontier_df["vol"].max() * 1.15])
-        slope  = (msr["ret"] - risk_free_rate) / msr["vol"]
-        y_cml  = risk_free_rate + slope * x_cml
+    # Cash mixed with the max-Sharpe portfolio. The line stops at that
+    # portfolio: the optimiser is fully invested and does not borrow.
+    if (
+        msr is not None
+        and msr.get("weights") is not None
+        and np.isfinite(msr.get("vol", np.nan))
+        and msr["vol"] > 0
+    ):
+        x_cml = np.array([0.0, float(msr["vol"])])
+        slope = (float(msr["ret"]) - risk_free_rate) / float(msr["vol"])
+        y_cml = risk_free_rate + slope * x_cml
         fig.add_trace(go.Scatter(
             x=x_cml, y=y_cml,
             mode="lines",
             line=dict(color=MSR_COLOR, dash="dash", width=1.5),
-            name="Capital Market Line",
+            name="Capital allocation line",
         ))
 
     # ── GMVP marker ───────────────────────────────────────────────────────────
@@ -199,7 +204,7 @@ def plot_drawdown(
     title: str = "Drawdown",
 ) -> go.Figure:
     """Drawdown chart for one or more portfolios."""
-    from src.metrics import cumulative_wealth, max_drawdown
+    from src.metrics import cumulative_wealth
     palette = px.colors.qualitative.Safe
     fig = go.Figure()
     for i, (label, dr) in enumerate(daily_returns_dict.items()):

@@ -3,12 +3,14 @@ metrics.py
 ----------
 Performance and risk metrics for portfolio evaluation.
 
-Covers
-------
-  - Annualised return, volatility, Sharpe ratio
-  - Maximum drawdown
-  - Calmar ratio
-  - Portfolio cumulative returns from weights + daily returns
+Inputs are daily *simple* returns (P_t / P_{t-1} - 1), not log returns.
+A long-only portfolio that is rebalanced to fixed weights each day has
+simple return wᵀ r. That identity does not hold for log returns.
+
+Annualisation uses 252 trading days and assumes daily returns are
+uncorrelated through time. The Sharpe ratio uses the arithmetic mean
+excess return. CAGR is reported separately and is the numerator of the
+Calmar ratio.
 """
 
 from __future__ import annotations
@@ -17,130 +19,174 @@ import numpy as np
 import pandas as pd
 
 TRADING_DAYS = 252
+_WEIGHT_SUM_ATOL = 1e-4
 
 
-# ── Core statistics ────────────────────────────────────────────────────────────
+def _as_returns(daily_returns: pd.Series | np.ndarray) -> np.ndarray:
+    if isinstance(daily_returns, pd.Series):
+        values = daily_returns.to_numpy(dtype=float)
+    else:
+        values = np.asarray(daily_returns, dtype=float)
+    return np.ravel(values)
+
 
 def annualised_return(daily_returns: pd.Series | np.ndarray) -> float:
-    """
-    Compound Annualised Growth Rate (CAGR) from daily log-returns.
+    """Arithmetic annualised return: mean(daily simple return) × 252.
 
-    CAGR = exp( mean(r) × T ) - 1  where T = TRADING_DAYS
+    This is the expected-return convention used by the mean-variance
+    optimiser and by the Sharpe ratio. For compound growth, use ``cagr``.
     """
-    r = np.asarray(daily_returns)
-    return float(np.exp(r.mean() * TRADING_DAYS) - 1)
+    r = _as_returns(daily_returns)
+    if r.size == 0 or not np.all(np.isfinite(r)):
+        return np.nan
+    return float(np.mean(r) * TRADING_DAYS)
+
+
+def cagr(daily_returns: pd.Series | np.ndarray) -> float:
+    """Compound annual growth rate from daily simple returns.
+
+    CAGR = (Π (1 + r_t))^(252 / T) − 1.
+    """
+    r = _as_returns(daily_returns)
+    if r.size == 0 or not np.all(np.isfinite(r)):
+        return np.nan
+    growth = 1.0 + r
+    if np.any(growth <= 0):
+        return np.nan
+    wealth = float(np.prod(growth))
+    return wealth ** (TRADING_DAYS / r.size) - 1.0
 
 
 def annualised_volatility(daily_returns: pd.Series | np.ndarray) -> float:
-    """Annualised volatility (std dev of daily log-returns × √252)."""
-    r = np.asarray(daily_returns)
-    return float(r.std() * np.sqrt(TRADING_DAYS))
+    """Sample standard deviation of daily simple returns, times √252.
+
+    The sample divisor is T − 1, matching ``DataFrame.cov``, so a
+    one-asset portfolio's volatility equals the square root of its
+    annualised variance.
+    """
+    r = _as_returns(daily_returns)
+    if r.size < 2 or not np.all(np.isfinite(r)):
+        return np.nan
+    return float(np.std(r, ddof=1) * np.sqrt(TRADING_DAYS))
 
 
 def sharpe_ratio(
     daily_returns: pd.Series | np.ndarray,
     risk_free_rate: float = 0.04,
 ) -> float:
-    """
-    Sharpe ratio = (annualised_return - rf) / annualised_volatility.
+    """Sharpe ratio from daily simple returns.
 
-    Parameters
-    ----------
-    daily_returns   : daily log-returns
-    risk_free_rate  : annualised risk-free rate (default 4 %)
+    (mean(r) × 252 − rf) / (std(r, ddof=1) × √252)
+
+    ``risk_free_rate`` is an annualised, constant rate. The numerator is
+    the arithmetic excess return, not CAGR minus the risk-free rate.
     """
-    ret = annualised_return(daily_returns)
-    vol = annualised_volatility(daily_returns)
-    return (ret - risk_free_rate) / vol if vol > 0 else np.nan
+    r = _as_returns(daily_returns)
+    vol = annualised_volatility(r)
+    if r.size == 0 or not np.isfinite(vol) or vol <= 0:
+        return np.nan
+    return (float(np.mean(r) * TRADING_DAYS) - risk_free_rate) / vol
 
 
 def max_drawdown(cumulative_returns: pd.Series | np.ndarray) -> float:
+    """Maximum drawdown of a wealth index, as a positive fraction.
+
+    The series must include the starting net asset value. ``cumulative_wealth``
+    starts at 1, so a loss on the first day is counted.
     """
-    Maximum drawdown from a cumulative-return (or price) series.
-
-    MDD = max over time of  (peak - trough) / peak
-
-    Parameters
-    ----------
-    cumulative_returns : cumulative wealth index (starts at 1 or any base)
-
-    Returns
-    -------
-    float   Maximum drawdown as a *positive* fraction (e.g. 0.30 = 30 % loss).
-    """
-    cum = np.asarray(cumulative_returns, dtype=float)
+    cum = np.asarray(cumulative_returns, dtype=float).ravel()
+    cum = cum[np.isfinite(cum)]
+    if cum.size == 0 or np.any(cum < 0):
+        return np.nan
     running_max = np.maximum.accumulate(cum)
-    drawdowns   = (running_max - cum) / running_max
+    valid = running_max > 0
+    if not np.any(valid):
+        return np.nan
+    drawdowns = np.zeros_like(cum)
+    drawdowns[valid] = (running_max[valid] - cum[valid]) / running_max[valid]
     return float(drawdowns.max())
 
 
-def calmar_ratio(
-    daily_returns: pd.Series | np.ndarray,
-    risk_free_rate: float = 0.04,
-) -> float:
-    """Calmar = annualised excess return / max drawdown."""
-    cum = np.exp(np.cumsum(np.asarray(daily_returns)))
-    mdd = max_drawdown(cum)
-    ret = annualised_return(daily_returns)
-    return (ret - risk_free_rate) / mdd if mdd > 0 else np.nan
+def calmar_ratio(daily_returns: pd.Series | np.ndarray) -> float:
+    """Calmar ratio = CAGR / maximum drawdown.
 
+    Young (1991) does not subtract a risk-free rate.
+    """
+    wealth = cumulative_wealth(daily_returns)
+    drawdown = max_drawdown(wealth)
+    growth = cagr(daily_returns)
+    if not np.isfinite(drawdown) or drawdown <= 0 or not np.isfinite(growth):
+        return np.nan
+    return growth / drawdown
 
-# ── Portfolio-level helpers ────────────────────────────────────────────────────
 
 def portfolio_daily_returns(
     weights: np.ndarray | pd.Series,
     asset_returns: pd.DataFrame,
 ) -> pd.Series:
+    """Daily simple portfolio returns for fixed weights, rebalanced every day.
+
+    Portfolio return on day t is wᵀ r_t. Labelled weights are aligned to
+    ``asset_returns`` columns. Weights must already sum to 1 within
+    ``1e-4``; a small residual is rescaled, a large one is rejected.
     """
-    Compute daily portfolio log-returns given fixed weights.
-
-    Note: w @ log_returns is an approximation for daily rebalancing.
-    For buy-and-hold, use simple returns (exp(log_return)-1).
-
-    Parameters
-    ----------
-    weights       : portfolio weights (n,), must sum to ~1
-    asset_returns : daily log-return DataFrame (T × n)
-
-    Returns
-    -------
-    pd.Series  daily portfolio log-returns
-    """
-    w = np.asarray(weights)
-    w = w / w.sum()   # normalise
-    return asset_returns.values @ w
-
-
-def cumulative_wealth(daily_log_returns: np.ndarray | pd.Series) -> pd.Series:
-    """Convert daily log-returns to cumulative wealth index (starts at 1)."""
-    r = np.asarray(daily_log_returns)
-    index = daily_log_returns.index if hasattr(daily_log_returns, "index") else range(len(r))
-    return pd.Series(np.exp(np.cumsum(r)), index=index)
+    if not isinstance(asset_returns, pd.DataFrame):
+        raise TypeError("asset_returns must be a DataFrame of simple returns")
+    if isinstance(weights, pd.Series):
+        aligned = weights.reindex(asset_returns.columns)
+        if aligned.isna().any():
+            missing = [str(col) for col in asset_returns.columns[aligned.isna()]]
+            raise ValueError(f"weights are missing assets: {missing}")
+        w = aligned.to_numpy(dtype=float)
+    else:
+        w = np.asarray(weights, dtype=float).ravel()
+        if w.size != asset_returns.shape[1]:
+            raise ValueError(
+                f"weights length {w.size} does not match {asset_returns.shape[1]} assets"
+            )
+    if not np.all(np.isfinite(w)):
+        raise ValueError("weights must be finite")
+    total = float(w.sum())
+    if abs(total - 1.0) > _WEIGHT_SUM_ATOL:
+        raise ValueError(f"weights must sum to 1 (got {total:.6f})")
+    w = w / total
+    simple = asset_returns.to_numpy(dtype=float) @ w
+    return pd.Series(simple, index=asset_returns.index, name="portfolio")
 
 
-# ── Summary report ─────────────────────────────────────────────────────────────
+def cumulative_wealth(daily_returns: np.ndarray | pd.Series) -> pd.Series:
+    """Wealth index from daily simple returns, starting at 1 before the first day."""
+    if isinstance(daily_returns, pd.Series):
+        r = daily_returns.astype(float)
+    else:
+        r = pd.Series(np.asarray(daily_returns, dtype=float).ravel())
+    if r.empty:
+        return pd.Series(dtype=float)
+    wealth = (1.0 + r).cumprod()
+    if isinstance(r.index, pd.DatetimeIndex):
+        start_ts = pd.Timestamp(r.index[0]) - pd.tseries.offsets.BDay(1)
+        if start_ts in wealth.index:
+            start_ts = pd.Timestamp(r.index[0]) - pd.Timedelta(days=1)
+        starter = pd.Series([1.0], index=pd.DatetimeIndex([start_ts]), name=r.name)
+    else:
+        starter = pd.Series([1.0], index=[r.index[0] - 1], name=r.name)
+    return pd.concat([starter, wealth])
+
 
 def performance_summary(
     portfolio_returns: pd.Series,
     label: str = "Portfolio",
     risk_free_rate: float = 0.04,
 ) -> pd.Series:
-    """
-    One-row summary of key performance metrics.
-
-    Returns
-    -------
-    pd.Series with index: [Annualised Return, Annualised Vol, Sharpe Ratio,
-                            Max Drawdown, Calmar Ratio]
-    """
-    cum = cumulative_wealth(portfolio_returns)
+    """One-column summary. Sharpe uses the arithmetic return, Calmar uses CAGR."""
     return pd.Series(
         {
-            "Annualised Return": annualised_return(portfolio_returns),
-            "Annualised Vol":    annualised_volatility(portfolio_returns),
-            "Sharpe Ratio":      sharpe_ratio(portfolio_returns, risk_free_rate),
-            "Max Drawdown":      max_drawdown(cum),
-            "Calmar Ratio":      calmar_ratio(portfolio_returns, risk_free_rate),
+            "Arithmetic Return": annualised_return(portfolio_returns),
+            "CAGR": cagr(portfolio_returns),
+            "Annualised Vol": annualised_volatility(portfolio_returns),
+            "Sharpe Ratio": sharpe_ratio(portfolio_returns, risk_free_rate),
+            "Max Drawdown": max_drawdown(cumulative_wealth(portfolio_returns)),
+            "Calmar Ratio": calmar_ratio(portfolio_returns),
         },
         name=label,
     )
@@ -149,28 +195,19 @@ def performance_summary(
 def compare_portfolios(
     portfolios: dict[str, pd.Series],
     risk_free_rate: float = 0.04,
-) -> pd.DataFrame:
-    """
-    Build a comparison table for multiple portfolio daily-return series.
-
-    Parameters
-    ----------
-    portfolios : {label: daily_log_returns_series}
-
-    Returns
-    -------
-    pd.DataFrame  rows = metrics, columns = portfolio labels
-    """
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Comparison table (metrics × portfolios) and a display format map."""
     rows = [
         performance_summary(ret, label=label, risk_free_rate=risk_free_rate)
         for label, ret in portfolios.items()
     ]
     df = pd.concat(rows, axis=1)
     fmt = {
-        "Annualised Return": "{:.2%}",
-        "Annualised Vol":    "{:.2%}",
-        "Sharpe Ratio":      "{:.3f}",
-        "Max Drawdown":      "{:.2%}",
-        "Calmar Ratio":      "{:.3f}",
+        "Arithmetic Return": "{:.2%}",
+        "CAGR": "{:.2%}",
+        "Annualised Vol": "{:.2%}",
+        "Sharpe Ratio": "{:.3f}",
+        "Max Drawdown": "{:.2%}",
+        "Calmar Ratio": "{:.3f}",
     }
     return df, fmt

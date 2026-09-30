@@ -3,27 +3,24 @@ optimizer.py
 ------------
 Markowitz mean-variance portfolio optimisation using CVXPY.
 
-Theory
-------
-The Markowitz (1952) framework selects portfolio weights w ∈ ℝⁿ to sit on
-the Efficient Frontier – the set of portfolios that maximise expected return
-for a given level of risk (variance).
+Quadratic programme for a minimum-variance portfolio:
 
-Quadratic programme (QP) for a target return μ_t:
+    min   wᵀ Σ w
+    s.t.  1ᵀ w = 1
+          w ≥ 0
+          w ≤ w_max                 (optional)
+          μᵀ w ≥ μ_target           (optional; omitted for the global minimum)
 
-    min   wᵀ Σ w          (minimise portfolio variance)
-    s.t.  wᵀ μ  = μ_t     (hit target return)
-          1ᵀ w  = 1        (fully invested)
-          w ≥ 0            (long only)
-          w ≤ w_max        (optional diversification cap)
+Maximum Sharpe, long only, uses the standard convex reformulation. With
+excess return π = μ − rf·1:
 
-Global Minimum Variance Portfolio (GMVP) drops the return constraint.
+    min   yᵀ Σ y
+    s.t.  πᵀ y = 1
+          y ≥ 0
+          y ≤ w_max · 1ᵀ y          (optional)
 
-Maximum Sharpe Ratio (MSR) is solved via the Dinkelbach / Markowitz
-two-fund separation trick:
-    Reformulate as: min  yᵀ Σ y
-                    s.t. (μ - rf)ᵀ y = 1,  1ᵀ y = κ,  y ≥ 0
-    then  w* = y / sum(y).
+and w* = y / 1ᵀ y. Failed or infeasible solves return ``weights=None``
+and do not raise.
 """
 
 from __future__ import annotations
@@ -33,73 +30,175 @@ import pandas as pd
 import cvxpy as cp
 from scipy.optimize import minimize
 
+_OPTIMAL = {"optimal", "optimal_inaccurate"}
+_INFEASIBLE = {
+    "infeasible",
+    "infeasible_inaccurate",
+    "unbounded",
+    "unbounded_inaccurate",
+}
 
-# ── helpers ───────────────────────────────────────────────────────────────────
 
-def _arrays(mu, cov):
-    return np.asarray(mu, dtype=float), np.asarray(cov, dtype=float)
+def _failure(status: str) -> dict:
+    return {
+        "weights": None,
+        "ret": np.nan,
+        "vol": np.nan,
+        "sharpe": np.nan,
+        "status": status,
+    }
+
+
+def _inputs(mu, cov):
+    """Return (mu, psd covariance, tickers, error_status)."""
+    tickers = list(mu.index) if hasattr(mu, "index") else None
+    mu_arr = np.asarray(mu, dtype=float).ravel()
+    cov_arr = np.asarray(cov, dtype=float)
+    n = mu_arr.size
+    if tickers is None:
+        tickers = [f"A{i}" for i in range(n)]
+    if len(tickers) != n:
+        raise ValueError("mu index length does not match the number of assets")
+    if cov_arr.shape != (n, n):
+        raise ValueError(f"cov shape {cov_arr.shape} does not match {n} assets")
+    if not np.all(np.isfinite(mu_arr)) or not np.all(np.isfinite(cov_arr)):
+        return None, None, tickers, "non_finite_input"
+    cov_arr = 0.5 * (cov_arr + cov_arr.T)
+    eigvals, eigvecs = np.linalg.eigh(cov_arr)
+    min_eig = float(eigvals.min()) if eigvals.size else 0.0
+    if min_eig < -1e-6:
+        return None, None, tickers, "covariance_not_psd"
+    if min_eig < 0:
+        eigvals = np.clip(eigvals, 0, None)
+        cov_arr = (eigvecs * eigvals) @ eigvecs.T
+    return mu_arr, cov_arr, tickers, None
+
+
+def _cap_infeasible(n: int, max_weight: float | None) -> bool:
+    if max_weight is None:
+        return False
+    if max_weight <= 0:
+        return True
+    return float(max_weight) * n < 1.0 - 1e-9
+
+
+def _max_feasible_return(mu: np.ndarray, max_weight: float | None) -> float:
+    """Highest long-only fully invested return under an optional name cap."""
+    if max_weight is None or max_weight >= 1:
+        return float(np.max(mu))
+    remaining = 1.0
+    total = 0.0
+    for value in np.sort(np.asarray(mu, dtype=float))[::-1]:
+        take = min(float(max_weight), remaining)
+        total += take * float(value)
+        remaining -= take
+        if remaining <= 1e-12:
+            break
+    return float(total)
 
 
 def _portfolio_stats(w, mu, cov, rf=0.04):
-    ret = w @ mu
-    vol = float(np.sqrt(w @ cov @ w))
-    sharpe = (ret - rf) / vol
-    return ret, vol, sharpe
+    w = np.asarray(w, dtype=float).ravel()
+    ret = float(w @ mu)
+    var = float(w @ cov @ w)
+    if -1e-10 < var < 0:
+        var = 0.0
+    if var < 0:
+        return ret, np.nan, np.nan
+    vol = float(np.sqrt(var))
+    if vol <= 0:
+        return ret, vol, np.nan
+    return ret, vol, (ret - rf) / vol
 
 
-# ── CVXPY-based optimisers ────────────────────────────────────────────────────
+def _result(weights: pd.Series, mu, cov, rf, status: str) -> dict:
+    ret, vol, sharpe = _portfolio_stats(weights.to_numpy(), mu, cov, rf)
+    return {
+        "weights": weights,
+        "ret": ret,
+        "vol": vol,
+        "sharpe": sharpe,
+        "status": status,
+    }
+
+
+def _finalize_weights(raw, tickers, max_weight, expect_simplex: bool) -> pd.Series | None:
+    """Turn a solver vector into long-only weights that sum to 1.
+
+    ``expect_simplex`` is true when the solver variable is already a
+    portfolio (minimum variance). Maximum Sharpe solves for an unnormalised
+    direction y, so only the normalised weights are checked against the cap.
+    """
+    w = np.asarray(raw, dtype=float).ravel()
+    if w.size != len(tickers) or not np.all(np.isfinite(w)):
+        return None
+    w[w < 1e-12] = 0.0
+    total = float(w.sum())
+    if total <= 1e-12:
+        return None
+    if expect_simplex and abs(total - 1.0) > 1e-3:
+        return None
+    w = w / total
+    if max_weight is not None and np.any(w > float(max_weight) + 1e-4):
+        return None
+    return pd.Series(w, index=list(tickers))
+
+
+def _solve(problem: cp.Problem) -> str:
+    """Solve with CLARABEL, then OSQP, then SCS. Infeasible stays infeasible."""
+    last = "solver_error"
+    for solver in (cp.CLARABEL, cp.OSQP, cp.SCS):
+        try:
+            problem.solve(solver=solver, verbose=False)
+        except cp.SolverError:
+            last = "solver_error"
+            continue
+        status = problem.status or "solver_error"
+        if status in _OPTIMAL:
+            return status
+        if status in _INFEASIBLE:
+            return status
+        last = status
+    return last
+
 
 def min_variance(
     mu: np.ndarray | pd.Series,
     cov: np.ndarray | pd.DataFrame,
     max_weight: float | None = None,
     target_return: float | None = None,
+    risk_free_rate: float = 0.04,
 ) -> dict:
-    """
-    Global Minimum Variance Portfolio (GMVP), or constrained to a target return.
+    """Global minimum variance, or minimum variance at a required return.
 
-    Parameters
-    ----------
-    mu            : annualised expected returns (n,)
-    cov           : annualised covariance matrix (n, n)
-    max_weight    : optional upper bound per asset weight (e.g. 0.40)
-    target_return : if supplied, solve for minimum variance *at* this return
-
-    Returns
-    -------
-    dict with keys: weights, ret, vol, sharpe, status
+    ``risk_free_rate`` does not change the weights. It is used only for the
+    reported Sharpe ratio, and it must be the same rate used everywhere else.
     """
-    mu_arr, cov_arr = _arrays(mu, cov)
+    mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
+    if error:
+        return _failure(error)
     n = len(mu_arr)
+    if _cap_infeasible(n, max_weight):
+        return _failure("infeasible_max_weight")
+    if target_return is not None:
+        ceiling = _max_feasible_return(mu_arr, max_weight)
+        if target_return > ceiling + 1e-8:
+            return _failure("infeasible_target_return")
 
     w = cp.Variable(n)
-    objective    = cp.Minimize(cp.quad_form(w, cov_arr))
-    constraints  = [cp.sum(w) == 1, w >= 0]
-
+    constraints = [cp.sum(w) == 1, w >= 0]
     if max_weight is not None:
         constraints.append(w <= max_weight)
-
     if target_return is not None:
         constraints.append(mu_arr @ w >= target_return)
-
-    prob = cp.Problem(objective, constraints)
-    prob.solve(solver=cp.CLARABEL, warm_start=True)
-
-    if prob.status not in ("optimal", "optimal_inaccurate"):
-        return {"weights": None, "status": prob.status}
-
-    w_vals = np.clip(w.value, 0, 1)
-    w_vals /= w_vals.sum()          # re-normalise after numerical clip
-    ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr)
-    tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(n)]
-
-    return {
-        "weights": pd.Series(w_vals, index=tickers),
-        "ret":     ret,
-        "vol":     vol,
-        "sharpe":  sharpe,
-        "status":  prob.status,
-    }
+    problem = cp.Problem(cp.Minimize(cp.quad_form(w, cov_arr)), constraints)
+    status = _solve(problem)
+    if status not in _OPTIMAL or w.value is None:
+        return _failure(status)
+    cleaned = _finalize_weights(w.value, tickers, max_weight, expect_simplex=True)
+    if cleaned is None:
+        return _failure("invalid_weights")
+    return _result(cleaned, mu_arr, cov_arr, risk_free_rate, status)
 
 
 def max_sharpe(
@@ -108,61 +207,30 @@ def max_sharpe(
     risk_free_rate: float = 0.04,
     max_weight: float | None = None,
 ) -> dict:
-    """
-    Maximum Sharpe Ratio portfolio via the Dinkelbach reformulation.
-
-    The trick: let y = w/κ where κ = (μ-rf)ᵀw (excess return scalar).
-    Then maximising Sharpe is equivalent to:
-        min  yᵀ Σ y
-        s.t. (μ - rf)ᵀ y = 1,  1ᵀ y ≥ 0,  y ≥ 0
-    and w* = y / sum(y).
-
-    Parameters
-    ----------
-    mu             : annualised expected returns
-    cov            : annualised covariance matrix
-    risk_free_rate : annualised risk-free rate (default 4 %)
-    max_weight     : optional per-asset weight cap
-
-    Returns
-    -------
-    dict with keys: weights, ret, vol, sharpe, status
-    """
-    mu_arr, cov_arr = _arrays(mu, cov)
+    """Long-only maximum Sharpe portfolio. Infeasible problems return weights=None."""
+    mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
+    if error:
+        return _failure(error)
     n = len(mu_arr)
+    if _cap_infeasible(n, max_weight):
+        return _failure("infeasible_max_weight")
     excess = mu_arr - risk_free_rate
+    if np.all(excess <= 0):
+        return _failure("no_positive_excess_return")
 
     y = cp.Variable(n)
-    objective   = cp.Minimize(cp.quad_form(y, cov_arr))
-    constraints = [excess @ y == 1, cp.sum(y) >= 0, y >= 0]
-
+    constraints = [excess @ y == 1, y >= 0]
     if max_weight is not None:
-        # max_weight constraint translates to y_i / sum(y) <= max_weight
-        # Approximate: y_i <= max_weight * sum(y). Use a scalar t = sum(y).
-        t = cp.Variable(1, nonneg=True)
-        constraints += [cp.sum(y) == t, y <= max_weight * t]
-
-    prob = cp.Problem(objective, constraints)
-    prob.solve(solver=cp.CLARABEL, warm_start=True)
-
-    if prob.status not in ("optimal", "optimal_inaccurate") or y.value is None:
-        return {"weights": None, "status": prob.status}
-
-    w_vals = np.clip(y.value, 0, None)
-    if w_vals.sum() < 1e-10:
-        return {"weights": None, "status": "degenerate"}
-    w_vals /= w_vals.sum()
-
-    ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr, risk_free_rate)
-    tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(n)]
-
-    return {
-        "weights": pd.Series(w_vals, index=tickers),
-        "ret":     ret,
-        "vol":     vol,
-        "sharpe":  sharpe,
-        "status":  prob.status,
-    }
+        total = cp.Variable(nonneg=True)
+        constraints += [cp.sum(y) == total, y <= max_weight * total]
+    problem = cp.Problem(cp.Minimize(cp.quad_form(y, cov_arr)), constraints)
+    status = _solve(problem)
+    if status not in _OPTIMAL or y.value is None:
+        return _failure(status)
+    cleaned = _finalize_weights(y.value, tickers, max_weight, expect_simplex=False)
+    if cleaned is None:
+        return _failure("invalid_weights")
+    return _result(cleaned, mu_arr, cov_arr, risk_free_rate, status)
 
 
 def efficient_frontier(
@@ -172,65 +240,60 @@ def efficient_frontier(
     max_weight: float | None = None,
     risk_free_rate: float = 0.04,
 ) -> pd.DataFrame:
+    """Minimum-variance portfolios from the global minimum up to the feasible max return.
+
+    The top of the sweep respects ``max_weight``. Infeasible inputs produce
+    an empty frame with the expected columns.
     """
-    Compute the Efficient Frontier by sweeping target returns.
+    mu_arr, _cov_arr, tickers, error = _inputs(mu, cov)
+    cols = ["ret", "vol", "sharpe"] + list(tickers)
+    if error or _cap_infeasible(len(mu_arr), max_weight):
+        return pd.DataFrame(columns=cols)
 
-    For each target return μ_t ∈ [μ_min, μ_max] solve the minimum-variance QP
-    and record (return, volatility, sharpe, weights).
+    gmvp = min_variance(mu, cov, max_weight=max_weight, risk_free_rate=risk_free_rate)
+    if gmvp["weights"] is None:
+        return pd.DataFrame(columns=cols)
 
-    Parameters
-    ----------
-    mu           : annualised expected returns
-    cov          : annualised covariance matrix
-    n_points     : number of frontier points
-    max_weight   : optional per-asset weight cap
-    risk_free_rate : for Sharpe calculation
-
-    Returns
-    -------
-    pd.DataFrame  columns: [ret, vol, sharpe, <ticker_0>, …, <ticker_n>]
-                  sorted by volatility ascending
-    """
-    mu_arr, cov_arr = _arrays(mu, cov)
-    tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(len(mu_arr))]
-
-    # Feasible return range – from GMVP return to maximum individual asset return
-    gmvp = min_variance(mu, cov, max_weight=max_weight)
-    mu_min = gmvp["ret"] if gmvp["weights"] is not None else mu_arr.min()
-    mu_max = mu_arr.max() * 0.995    # slight buffer for numerical stability
-
-    targets = np.linspace(mu_min, mu_max, n_points)
+    mu_lo = float(gmvp["ret"])
+    mu_hi = _max_feasible_return(mu_arr, max_weight)
+    if mu_hi < mu_lo:
+        mu_hi = mu_lo
+    elif mu_hi > mu_lo:
+        mu_hi = mu_lo + 0.995 * (mu_hi - mu_lo)
+    targets = np.linspace(mu_lo, mu_hi, n_points)
     records = []
-
     for target in targets:
-        result = min_variance(mu, cov, max_weight=max_weight, target_return=target)
+        result = min_variance(
+            mu,
+            cov,
+            max_weight=max_weight,
+            target_return=float(target),
+            risk_free_rate=risk_free_rate,
+        )
         if result["weights"] is None:
             continue
-        w = result["weights"].values
-        ret, vol, sharpe = _portfolio_stats(w, mu_arr, cov_arr, risk_free_rate)
-        records.append([ret, vol, sharpe, *w])
+        records.append(
+            [result["ret"], result["vol"], result["sharpe"], *result["weights"].to_numpy()]
+        )
+    return pd.DataFrame(records, columns=cols).sort_values("vol").reset_index(drop=True)
 
-    cols = ["ret", "vol", "sharpe"] + tickers
-    df = pd.DataFrame(records, columns=cols).sort_values("vol").reset_index(drop=True)
-    return df
-
-
-# ── SciPy fallback ────────────────────────────────────────────────────────────
 
 def min_variance_scipy(
     mu: np.ndarray | pd.Series,
     cov: np.ndarray | pd.DataFrame,
     target_return: float | None = None,
     max_weight: float | None = None,
+    risk_free_rate: float = 0.04,
 ) -> dict:
-    """
-    Minimum-variance portfolio solved with SciPy SLSQP (fallback / comparison).
-
-    Uses scipy.optimize.minimize with analytic Jacobian of the variance.
-    """
-    mu_arr, cov_arr = _arrays(mu, cov)
+    """Minimum-variance portfolio solved with SciPy SLSQP."""
+    mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
+    if error:
+        return _failure(error)
     n = len(mu_arr)
-    tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(n)]
+    if _cap_infeasible(n, max_weight):
+        return _failure("infeasible_max_weight")
+    if target_return is not None and target_return > _max_feasible_return(mu_arr, max_weight) + 1e-8:
+        return _failure("infeasible_target_return")
 
     def portfolio_variance(w):
         return float(w @ cov_arr @ w)
@@ -240,35 +303,25 @@ def min_variance_scipy(
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
     if target_return is not None:
-        constraints.append({"type": "ineq", "fun": lambda w: w @ mu_arr - target_return})
+        target = float(target_return)
+        constraints.append({"type": "ineq", "fun": lambda w, target=target: w @ mu_arr - target})
 
-    bounds = [(0, max_weight or 1.0)] * n
-    w0 = np.ones(n) / n
-
+    upper = 1.0 if max_weight is None else float(max_weight)
     res = minimize(
         portfolio_variance,
-        w0,
+        np.ones(n) / n,
         jac=grad_variance,
         method="SLSQP",
-        bounds=bounds,
+        bounds=[(0.0, upper)] * n,
         constraints=constraints,
-        options={"ftol": 1e-12, "maxiter": 1000},
+        options={"ftol": 1e-12, "maxiter": 1000, "disp": False},
     )
-
     if not res.success:
-        return {"weights": None, "status": res.message}
-
-    w_vals = np.clip(res.x, 0, 1)
-    w_vals /= w_vals.sum()
-    ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr)
-
-    return {
-        "weights": pd.Series(w_vals, index=tickers),
-        "ret":     ret,
-        "vol":     vol,
-        "sharpe":  sharpe,
-        "status":  "optimal",
-    }
+        return _failure(str(res.message))
+    cleaned = _finalize_weights(res.x, tickers, max_weight, expect_simplex=True)
+    if cleaned is None:
+        return _failure("invalid_weights")
+    return _result(cleaned, mu_arr, cov_arr, risk_free_rate, "optimal")
 
 
 def max_sharpe_scipy(
@@ -277,35 +330,34 @@ def max_sharpe_scipy(
     risk_free_rate: float = 0.04,
     max_weight: float | None = None,
 ) -> dict:
-    """
-    Maximum Sharpe ratio portfolio via SciPy SLSQP (minimise negative Sharpe).
-    """
-    mu_arr, cov_arr = _arrays(mu, cov)
+    """Maximum Sharpe portfolio via SciPy SLSQP (minimises negative Sharpe)."""
+    mu_arr, cov_arr, tickers, error = _inputs(mu, cov)
+    if error:
+        return _failure(error)
     n = len(mu_arr)
-    tickers = list(mu.index) if hasattr(mu, "index") else [f"A{i}" for i in range(n)]
+    if _cap_infeasible(n, max_weight):
+        return _failure("infeasible_max_weight")
+    if np.all(mu_arr - risk_free_rate <= 0):
+        return _failure("no_positive_excess_return")
 
     def neg_sharpe(w):
-        ret = w @ mu_arr
-        vol = np.sqrt(w @ cov_arr @ w)
-        return -(ret - risk_free_rate) / vol
+        var = float(w @ cov_arr @ w)
+        if var <= 1e-18:
+            return 1e6
+        return -((w @ mu_arr) - risk_free_rate) / np.sqrt(var)
 
-    constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-    bounds = [(0, max_weight or 1.0)] * n
-    w0 = np.ones(n) / n
-
+    upper = 1.0 if max_weight is None else float(max_weight)
     res = minimize(
-        neg_sharpe, w0,
-        method="SLSQP", bounds=bounds, constraints=constraints,
-        options={"ftol": 1e-12, "maxiter": 1000},
+        neg_sharpe,
+        np.ones(n) / n,
+        method="SLSQP",
+        bounds=[(0.0, upper)] * n,
+        constraints=[{"type": "eq", "fun": lambda w: np.sum(w) - 1}],
+        options={"ftol": 1e-12, "maxiter": 1000, "disp": False},
     )
-
     if not res.success:
-        return {"weights": None, "status": res.message}
-
-    w_vals = np.clip(res.x, 0, 1);  w_vals /= w_vals.sum()
-    ret, vol, sharpe = _portfolio_stats(w_vals, mu_arr, cov_arr, risk_free_rate)
-
-    return {
-        "weights": pd.Series(w_vals, index=tickers),
-        "ret":     ret, "vol": vol, "sharpe": sharpe, "status": "optimal",
-    }
+        return _failure(str(res.message))
+    cleaned = _finalize_weights(res.x, tickers, max_weight, expect_simplex=True)
+    if cleaned is None:
+        return _failure("invalid_weights")
+    return _result(cleaned, mu_arr, cov_arr, risk_free_rate, "optimal")
