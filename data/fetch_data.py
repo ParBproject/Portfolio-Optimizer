@@ -13,6 +13,9 @@ import pandas as pd
 
 # ── Default configuration ──────────────────────────────────────────────────────
 DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "JPM", "SPY"]
+# Bond sleeve for the 60/40 benchmark. Not part of the default optimiser universe:
+# putting it in the universe would change the frontier the demo was built around.
+BENCHMARK_TICKERS = ["AGG"]
 DEFAULT_START   = "2015-01-01"
 DEFAULT_END     = "2024-12-31"
 CACHE_DIR       = os.path.join(os.path.dirname(__file__), "cache")
@@ -22,6 +25,19 @@ SNAPSHOT_META   = os.path.join(SNAPSHOT_DIR, "snapshot.json")
 # Holidays and long weekends only. A longer gap is left missing so a halt
 # is not turned into a streak of zero returns.
 MAX_FFILL_DAYS  = 5
+
+
+def exclusive_end(end) -> str:
+    """Inclusive last session, as the next exclusive day yfinance expects.
+
+    The Streamlit "End date" is a session the user wants included.
+    ``download_prices`` and the snapshot slice treat ``end`` as exclusive,
+    matching yfinance. Passing the raw control value drops that session.
+    """
+    stamp = pd.Timestamp(end)
+    if stamp.tzinfo is not None:
+        stamp = stamp.tz_localize(None)
+    return (stamp.normalize() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def price_source() -> str:

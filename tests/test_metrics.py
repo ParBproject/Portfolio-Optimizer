@@ -10,7 +10,9 @@ from src.metrics import (
     annualised_volatility,
     cagr,
     calmar_ratio,
+    compare_portfolios,
     cumulative_wealth,
+    format_comparison,
     max_drawdown,
     portfolio_daily_returns,
     sharpe_ratio,
@@ -72,6 +74,18 @@ def test_weights_far_from_one_are_rejected():
     simple = pd.DataFrame({"A": [0.01], "B": [0.02]})
     with pytest.raises(ValueError, match="sum to 1"):
         portfolio_daily_returns(np.array([0.2, 0.2]), simple)
+
+
+def test_comparison_table_formats_without_jinja():
+    returns = {
+        "A": pd.Series([0.01, -0.02, 0.015]),
+        "B": pd.Series([0.0, 0.0, 0.0]),
+    }
+    table, formats = compare_portfolios(returns, risk_free_rate=0.01)
+    display = format_comparison(table, formats)
+    assert display.loc["Arithmetic Return", "A"].endswith("%")
+    assert display.loc["Sharpe Ratio", "A"] == f"{table.loc['Sharpe Ratio', 'A']:.3f}"
+    assert display.loc["Sharpe Ratio", "B"] == ""
 
 
 def test_annualised_return_is_arithmetic():

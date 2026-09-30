@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from data.fetch_data import DEFAULT_START, DEFAULT_TICKERS, download_prices
+from data.fetch_data import BENCHMARK_TICKERS, DEFAULT_START, DEFAULT_TICKERS, download_prices
 
 # fetch_data.DEFAULT_END is "2024-12-31", and yfinance treats end as
 # exclusive, so a download that stops there drops 2024-12-31. Ask through
@@ -34,8 +34,11 @@ OUT_DIR = ROOT / "data" / "snapshot"
 
 def main() -> None:
     os.environ["PORTFOLIO_PRICE_SOURCE"] = "yahoo"
+    tickers = list(DEFAULT_TICKERS) + [
+        ticker for ticker in BENCHMARK_TICKERS if ticker not in DEFAULT_TICKERS
+    ]
     prices = download_prices(
-        list(DEFAULT_TICKERS),
+        tickers,
         start=REQUEST_START,
         end=REQUEST_END_EXCLUSIVE,
         cache=False,

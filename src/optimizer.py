@@ -136,7 +136,9 @@ def _finalize_weights(raw, tickers, max_weight, expect_simplex: bool) -> pd.Seri
     w = np.asarray(raw, dtype=float).ravel()
     if w.size != len(tickers) or not np.all(np.isfinite(w)):
         return None
-    w[w < 1e-12] = 0.0
+    # Solver noise at 1e-9 is not a holding. Drop it before renormalising so a
+    # one-asset solution is exactly that asset rather than 1 minus a few ulps.
+    w[w < 1e-8] = 0.0
     total = float(w.sum())
     if total <= 1e-12:
         return None

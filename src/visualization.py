@@ -229,7 +229,7 @@ def plot_backtest(
     """
     chrome = _chrome(theme)
     if theme == "dark":
-        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4"]
+        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4", "#C4B5FD", "#FDBA74"]
     else:
         palette = px.colors.qualitative.Safe
     fig = go.Figure()
@@ -265,7 +265,7 @@ def plot_drawdown(
     from src.metrics import cumulative_wealth
     chrome = _chrome(theme)
     if theme == "dark":
-        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4"]
+        palette = ["#10B981", "#FBBF24", "#93C5FD", "#F9A8D4", "#C4B5FD", "#FDBA74"]
     else:
         palette = px.colors.qualitative.Safe
     fig = go.Figure()

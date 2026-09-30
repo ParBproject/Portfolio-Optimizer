@@ -17,6 +17,7 @@ def test_demo_site_bundles_the_app_and_the_snapshot(tmp_path):
     assert (dest / ".nojekyll").is_file()
     for relative in (
         "app.py",
+        "src/covariance.py",
         "src/optimizer.py",
         "data/fetch_data.py",
         "data/snapshot/prices.csv",

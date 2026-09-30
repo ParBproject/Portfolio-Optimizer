@@ -4,8 +4,10 @@ import pandas as pd
 import pytest
 
 from data.fetch_data import (
+    BENCHMARK_TICKERS,
     DEFAULT_TICKERS,
     download_prices,
+    exclusive_end,
     price_source,
     snapshot_label,
     snapshot_metadata,
@@ -53,6 +55,41 @@ def test_snapshot_end_is_exclusive(monkeypatch):
     exclusive = download_prices(["SPY"], start=meta["first_session"], end=last)
     assert inclusive.index.max() == pd.Timestamp(last)
     assert exclusive.index.max() < pd.Timestamp(last)
+
+
+def test_app_end_date_includes_the_last_snapshot_session(monkeypatch):
+    monkeypatch.setenv("PORTFOLIO_PRICE_SOURCE", "snapshot")
+    meta = snapshot_metadata()
+    prices = download_prices(["SPY"], start="2024-12-01", end=exclusive_end(meta["last_session"]))
+    assert exclusive_end("2024-12-31") == "2025-01-01"
+    assert prices.index.max() == pd.Timestamp(meta["last_session"])
+
+
+def test_snapshot_carries_the_bond_benchmark_on_the_same_sessions():
+    meta = snapshot_metadata()
+    assert BENCHMARK_TICKERS == ["AGG"]
+    assert "AGG" in meta["tickers"]
+    prices = pd.read_csv("data/snapshot/prices.csv", index_col=0, parse_dates=True)
+    assert list(prices.columns) == meta["tickers"]
+    assert prices["AGG"].notna().all()
+    assert prices.index.min() == pd.Timestamp(meta["first_session"])
+    assert prices.index.max() == pd.Timestamp(meta["last_session"])
+
+
+def test_snapshot_gmvp_is_the_market_etf(monkeypatch):
+    """No weight cap: long-only minimum variance on this universe is SPY."""
+    monkeypatch.setenv("PORTFOLIO_PRICE_SOURCE", "snapshot")
+    data = load_data(list(DEFAULT_TICKERS), "2015-01-01", "2025-01-01", train_end="2023-12-31")
+    gmvp = min_variance(data["mu"], data["cov"], risk_free_rate=0.04)
+    msr = max_sharpe(data["mu"], data["cov"], risk_free_rate=0.04)
+    assert gmvp["weights"]["SPY"] == pytest.approx(1.0)
+    assert gmvp["weights"].drop(labels=["SPY"]).max() == pytest.approx(0.0)
+    # Pins the maximum-Sharpe mix so a change in annualisation or the program fails here.
+    assert msr["weights"].to_numpy() == pytest.approx(
+        [0.2339988, 0.4221424, 0.0, 0.2778131, 0.0660457, 0.0],
+        abs=1e-6,
+    )
+    assert msr["sharpe"] == pytest.approx(0.9596655, abs=1e-6)
 
 
 def test_snapshot_rejects_unknown_tickers_and_empty_windows(monkeypatch):

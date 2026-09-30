@@ -23,6 +23,7 @@ DEMO_FILES = (
     "app.py",
     "src/__init__.py",
     "src/backtest.py",
+    "src/covariance.py",
     "src/data_handler.py",
     "src/metrics.py",
     "src/optimizer.py",
