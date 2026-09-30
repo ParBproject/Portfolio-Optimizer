@@ -37,16 +37,28 @@ def compute_log_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return np.log(prices / prices.shift(1)).replace([np.inf, -np.inf], np.nan).dropna(how="any")
 
 
-def annualise_stats(daily_returns: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
-    """Annualise the sample mean and sample covariance of daily simple returns.
+def annualise_stats(
+    daily_returns: pd.DataFrame,
+    shrink: bool = False,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Annualise the sample mean and a covariance of daily simple returns.
 
-    The covariance divisor is n − 1 (``DataFrame.cov``). Multiplying by 252
-    assumes returns are uncorrelated across days.
+    The default covariance divisor is n − 1 (``DataFrame.cov``). Multiplying
+    by 252 assumes returns are uncorrelated across days. ``shrink=True``
+    replaces that covariance with the Ledoit-Wolf estimator (maximum-likelihood
+    covariance, shrunk toward a scaled identity, then multiplied by 252).
+    The mean is the sample mean either way.
     """
     if len(daily_returns) < 2:
         raise ValueError("Need at least two observations to estimate a covariance.")
     mu = daily_returns.mean() * TRADING_DAYS
-    cov = daily_returns.cov() * TRADING_DAYS
+    if shrink:
+        from src.covariance import ledoit_wolf
+
+        cov, _shrinkage = ledoit_wolf(daily_returns)
+        cov = cov * TRADING_DAYS
+    else:
+        cov = daily_returns.cov() * TRADING_DAYS
     return mu, cov
 
 

@@ -7,7 +7,8 @@
     "GOOGL",
     "AMZN",
     "JPM",
-    "SPY"
+    "SPY",
+    "AGG"
   ],
   "request_start": "2015-01-01",
   "request_end_exclusive": "2025-01-01",
@@ -15,5 +16,5 @@
   "last_session": "2024-12-31",
   "downloaded_on": "2026-09-30",
   "rows": 2516,
-  "note": "Static snapshot for the in-browser demo. Local runs download live prices from Yahoo Finance."
+  "note": "Static snapshot for the in-browser demo. Local runs download live prices from Yahoo Finance. AGG is the US aggregate bond ETF used only for the 60/40 benchmark; it is not in the default optimiser universe."
 }

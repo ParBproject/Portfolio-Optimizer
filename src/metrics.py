@@ -211,3 +211,22 @@ def compare_portfolios(
         "Calmar Ratio": "{:.3f}",
     }
     return df, fmt
+
+
+def format_comparison(table: pd.DataFrame, formats: dict[str, str]) -> pd.DataFrame:
+    """Format a comparison table without pandas Styler.
+
+    Styler needs jinja2 >= 3.1.5. That package is not a dependency, and the
+    copy of jinja2 on a typical system Python is older, so ``DataFrame.style``
+    raises and the backtest tab dies after the frontier has already been drawn.
+    """
+    display = pd.DataFrame(index=table.index, columns=table.columns, dtype=object)
+    for metric in table.index:
+        template = formats.get(str(metric))
+        for column in table.columns:
+            value = table.loc[metric, column]
+            if template is None or not np.isfinite(value):
+                display.loc[metric, column] = "" if not np.isfinite(value) else str(value)
+            else:
+                display.loc[metric, column] = template.format(value)
+    return display

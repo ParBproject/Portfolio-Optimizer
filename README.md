@@ -17,7 +17,7 @@
 
 An interactive quantitative-finance application implementing Markowitz mean-variance optimization, efficient-frontier construction, portfolio diagnostics, and a single train/test backtest.
 
-The chart images were written by `python scripts/render_figures.py` from split- and dividend-adjusted Yahoo Finance closes for AAPL, MSFT, GOOGL, AMZN, JPM, and SPY, requested from 2015-01-01 through 2024-12-31, with the training window ending 2023-12-31 and a constant 4% risk-free rate. They show the tools on that window. They are not a live track record, and the README does not claim that either optimised portfolio beat the equal-weight benchmark.
+The chart images were written by `python scripts/render_figures.py` from split- and dividend-adjusted Yahoo Finance closes. The optimiser universe is AAPL, MSFT, GOOGL, AMZN, JPM, and SPY. The price file also carries AGG, the US aggregate bond ETF, and it is used only as the bond sleeve of the 60/40 benchmark. The last session included is 2024-12-31. The split date is 2023-12-31, which was a Sunday, so the last training session is 2023-12-29. The risk-free rate is a constant 4%. The pictures show the tools on that window. They are not a live track record, and the README does not claim that either optimised portfolio beat equal weight, SPY, or 60/40.
 
 ## What It Demonstrates
 
@@ -26,7 +26,7 @@ The chart images were written by `python scripts/render_figures.py` from split- 
 - Global minimum-variance and maximum Sharpe portfolios
 - Efficient-frontier construction and a random long-only cloud
 - Correlation and allocation charts
-- An equal-weight comparison on the held-out window
+- An out-of-sample comparison with equal weight, SPY, and a 60/40 SPY/AGG sleeve, rebalanced monthly and charged a trading cost
 - Interactive controls through Streamlit
 - Unit tests for the return math, the weight constraints, and the train/test split
 
@@ -46,7 +46,7 @@ The dashed segment is the capital allocation line from cash to the maximum-Sharp
 
 ![Out-of-sample wealth](screenshots/03_backtest.png)
 
-Wealth assumes daily rebalancing to the fixed in-sample weights. There are no transaction costs.
+Wealth rebalances to the fixed in-sample weights on the first session of each month, drifts between those sessions, and pays 5 bps on every dollar bought or sold, including the opening trade from cash. The same rule is applied to equal weight, SPY, and 60/40 (60% SPY, 40% AGG). On this universe, with no weight cap, the global minimum-variance portfolio is 100% SPY, so that line is the market ETF after the opening cost.
 
 ### Interactive Application
 
@@ -105,6 +105,7 @@ Portfolio-Optimizer/
 ├── app.py
 ├── src/
 │   ├── backtest.py
+│   ├── covariance.py
 │   ├── data_handler.py
 │   ├── metrics.py
 │   ├── optimizer.py
@@ -128,12 +129,16 @@ Convex optimization, portfolio theory, Python, pandas, NumPy, CVXPY, Plotly, Str
 
 ## Assumptions & Limitations
 
-- Inputs are daily simple returns. A constant-weight backtest is the weighted sum of those returns, which is daily rebalancing, not buy-and-hold.
+- Inputs are daily simple returns. The mean-variance objective uses their weighted sum, which is a daily rebalance. The reported backtest does not. It trades back to the target on the first session of each month and lets the weights drift otherwise. The Backtest tab also keeps a column named "daily, no costs" so that identity stays visible.
+- Trade cost is a flat number of basis points on each dollar bought or sold. The default is 5. From cash, the opening trade turns over the whole portfolio. There is no market-impact model and no tax.
 - Arithmetic annualised return is mean(r) × 252. CAGR is (Π(1+r))^(252/T) − 1 and is reported separately. Sharpe uses the arithmetic excess return over a constant annual risk-free rate. Calmar is CAGR / maximum drawdown and does not subtract the risk-free rate. Drawdown is measured on a wealth index that starts at 1.
-- Volatility uses the sample standard deviation (divisor T − 1), so it matches the square root of the annualised sample variance.
+- The app's End date is the last session included. `download_prices` still treats its `end` argument as exclusive, matching yfinance.
+- Volatility uses the sample standard deviation (divisor T − 1), so it matches the square root of the annualised sample variance. The default covariance is that unbiased sample covariance, annualised by 252. Ledoit-Wolf shrinkage toward average variance is optional in the app. On the 2015–2023 window its intensity is about 1% (the test pins it under 2%), so the published frontier stays on the sample covariance. A 60-session window shrinks much harder. Expected returns are the sample mean in either case; they are not shrunk.
 - Prices are forward-filled for at most five sessions. Longer gaps are dropped rather than carried forward as a flat price.
-- The reported μ and Σ use only returns on or before the split date. The test window is every later session. The default split date in the app is 2023-12-31; the first test return is the next session, including when that date is not itself a trading day.
+- The reported μ and Σ use only returns on or before the split date. The test window is every later session. The default split date in the app is 2023-12-31; the first test return is the next session, including when that date is not itself a trading day. The portfolio tab's return, volatility, and Sharpe are those in-sample moments, not the backtest.
+- With no weight cap, the long-only global minimum-variance portfolio on this universe is 100% SPY. SPY is inside the optimiser universe, so that result is the optimiser holding the benchmark. Weights below 1e-8 are treated as solver noise and set to zero.
 - The [live demo](https://parbproject.github.io/Portfolio-Optimizer/) is this same app, packaged with [stlite](https://github.com/whitphx/stlite) so it runs in the browser. Browsers cannot call Yahoo Finance, so the demo reads `data/snapshot` and labels that snapshot's date range. A local run still uses live Yahoo Finance. The in-browser optimiser solves the same quadratic programmes with SciPy SLSQP, because CVXPY's compiled solvers are not available in Pyodide.
-- The app does one split. The backtest notebook can refit the maximum-Sharpe portfolio at each out-of-sample month using only data from before that month.
-- Long only, fully invested, optional per-name cap. No leverage, shorts, taxes, or market impact.
+- The app does one split. The backtest notebook refits the maximum-Sharpe portfolio at each out-of-sample month using only data from before that month, then holds the drifted weights and charges the same cost. A month that does not solve keeps the previous target. It is not dropped, and it is not filled with a later fit.
+- Benchmarks on that same monthly rule are equal weight, SPY, and 60/40. The 60/40 is 60% SPY and 40% AGG. It is not 40% cash: cash at the Sharpe ratio's own risk-free rate has the same Sharpe as the equity sleeve.
+- Long only, fully invested, optional per-name cap. No leverage, shorts, or borrowing. The capital allocation line on the frontier stops at the maximum-Sharpe portfolio.
 - Expected returns and covariances estimated this way are noisy. This project is educational and does not constitute financial advice.
